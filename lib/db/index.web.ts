@@ -1,5 +1,5 @@
 import { Database } from '@nozbe/watermelondb';
-import SQLiteAdapter from '@nozbe/watermelondb/adapters/sqlite';
+import LokiJSAdapter from '@nozbe/watermelondb/adapters/lokijs';
 import { schema } from './schema';
 import {
   Staff,
@@ -20,13 +20,13 @@ import {
   AuditLog,
 } from './models';
 
-// Native (Android / iOS): SQLite adapter
-// Web uses lib/db/index.web.ts (LokiJS) picked automatically by Metro
-const adapter = new SQLiteAdapter({
+// Web build: LokiJS adapter persists to IndexedDB in the browser
+const adapter = new LokiJSAdapter({
   schema,
-  jsi: false,
-  onSetUpError: (error) => {
-    console.error('WatermelonDB (SQLite) setup error:', error);
+  useWebWorker: false,
+  useIncrementalIndexedDB: true,
+  onSetUpError: (error: Error) => {
+    console.error('WatermelonDB (LokiJS) setup error:', error);
   },
 });
 
