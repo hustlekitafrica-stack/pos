@@ -143,11 +143,15 @@ export default function SettingsScreen() {
     { key: 'stock_manager', label: 'Stock Mgr' },
     { key: 'cashier', label: 'Cashier' },
     { key: 'bartender', label: 'Bartender' },
+    { key: 'waiter', label: 'Waiter' },
   ];
 
   return (
     <SafeAreaView className="flex-1 bg-surface">
-      <View className="px-4 pt-2 pb-1">
+      <View className="px-4 pt-3 pb-1">
+        <TouchableOpacity onPress={() => router.back()} className="mb-1">
+          <Text className="text-primary text-lg">← Home</Text>
+        </TouchableOpacity>
         <Text className="text-xl font-bold text-primary">Settings</Text>
         <Text className="text-xs text-gray-500">Logged in as: {currentStaff?.name} ({currentStaff?.role})</Text>
       </View>

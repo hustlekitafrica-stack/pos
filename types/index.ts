@@ -1,4 +1,4 @@
-export type Role = 'admin' | 'manager' | 'stock_manager' | 'cashier' | 'bartender';
+export type Role = 'admin' | 'manager' | 'stock_manager' | 'cashier' | 'bartender' | 'waiter';
 
 export type PrepStation = 'bar' | 'kitchen';
 

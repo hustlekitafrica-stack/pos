@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, SafeAreaView, Alert, Modal, TextInput, FlatList } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, SafeAreaView, Alert, Modal, TextInput, useWindowDimensions } from 'react-native';
 import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import { formatKES, toCents } from '@/utils/currency';
 import { useAuthStore } from '@/stores/authStore';
 import { database } from '@/lib/db';
-import { Order as OrderModel, OrderItem as OrderItemModel, Product as ProductModel, Category as CategoryModel, Customer as CustomerModel } from '@/lib/db/models';
+import { Order as OrderModel, OrderItem as OrderItemModel, Product as ProductModel, Category as CategoryModel, Customer as CustomerModel, RestaurantTable as TableModel } from '@/lib/db/models';
 import { initiateSTKPush, checkSTKStatus } from '@/lib/mpesa';
 import { Q } from '@nozbe/watermelondb';
+import { routeOrderItems } from '@/lib/printer/routeOrder';
+import { buildOrderSlip } from '@/lib/printer/templates';
+import { sendToPrinter } from '@/lib/printer/connection';
 import {
   getOrderItems,
   addItemToOrder,
@@ -16,7 +19,6 @@ import {
   recordPayment,
   getAllCategories,
   getProductsByCategory,
-  getAllActiveProducts,
   recalculateOrderTotal,
 } from '@/lib/db/actions';
 
@@ -25,25 +27,32 @@ export default function OrderScreen() {
   const currentStaff = useAuthStore((s) => s.currentStaff);
   const can = useAuthStore((s) => s.can);
 
+  const { width } = useWindowDimensions();
+  const numCols = width >= 600 ? 3 : 2;
+
   const [order, setOrder] = useState<OrderModel | null>(null);
   const [items, setItems] = useState<OrderItemModel[]>([]);
+  const [tableName, setTableName] = useState('');
   const [showMenu, setShowMenu] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
   const [showMpesa, setShowMpesa] = useState(false);
   const [showSplit, setShowSplit] = useState(false);
   const [showCreditPicker, setShowCreditPicker] = useState(false);
-  const [showRoomInput, setShowRoomInput] = useState(false);
+  const [showClientInput, setShowClientInput] = useState(false);
   const [mpesaPhone, setMpesaPhone] = useState('');
   const [mpesaLoading, setMpesaLoading] = useState(false);
   const [splitCashAmount, setSplitCashAmount] = useState('');
   const [splitMpesaAmount, setSplitMpesaAmount] = useState('');
   const [creditCustomers, setCreditCustomers] = useState<CustomerModel[]>([]);
-  const [roomNumber, setRoomNumber] = useState('');
+  const [clientId, setClientId] = useState('');
   const [showDiscount, setShowDiscount] = useState(false);
   const [discountAmount, setDiscountAmount] = useState('');
   const [discountReason, setDiscountReason] = useState('');
   const [showRefund, setShowRefund] = useState(false);
   const [refundReason, setRefundReason] = useState('');
+  const [showVoidModal, setShowVoidModal] = useState(false);
+  const [voidingItem, setVoidingItem] = useState<OrderItemModel | null>(null);
+  const [voidReason, setVoidReason] = useState('');
   const [categories, setCategories] = useState<CategoryModel[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductModel[]>([]);
@@ -54,7 +63,13 @@ export default function OrderScreen() {
     try {
       const o = await database.get<OrderModel>('orders').find(orderId);
       setOrder(o);
-      setRoomNumber(o.roomNumber || '');
+      setClientId(o.roomNumber || '');
+      try {
+        const tbl = await database.get<TableModel>('restaurant_tables').find(o.tableId);
+        setTableName(tbl.name);
+      } catch {
+        setTableName('Table');
+      }
       const orderItems = await getOrderItems(orderId);
       setItems(orderItems);
 
@@ -122,8 +137,55 @@ export default function OrderScreen() {
       return;
     }
     await sendOrder(orderId);
-    await loadOrder();
-    Alert.alert('Order Sent', 'Items sent to bar/kitchen');
+
+    // Route items to bar/kitchen printers
+    try {
+      const categoryCache: Record<string, CategoryModel | null> = {};
+      const getCat = (productId: string) => categoryCache[productId] ?? null;
+
+      // Pre-load categories for pending items
+      for (const item of pendingItems) {
+        if (!(item.productId in categoryCache)) {
+          try {
+            const prod = await database.get<ProductModel>('products').find(item.productId);
+            const cat = await database.get<CategoryModel>('categories').find(prod.categoryId);
+            categoryCache[item.productId] = cat;
+          } catch {
+            categoryCache[item.productId] = null;
+          }
+        }
+      }
+
+      const routed = routeOrderItems(pendingItems, getCat);
+      const tName = tableName || 'Table';
+      const clientLabel = clientId || undefined;
+
+      if (routed.bar.length > 0) {
+        const slip = buildOrderSlip(
+          tName,
+          routed.bar.map((i) => ({ name: productNames[i.productId] || i.productId, qty: i.qty, notes: i.notes ?? undefined })),
+          'bar',
+          clientLabel
+        );
+        const bytes = new TextEncoder().encode(slip);
+        sendToPrinter('bar', bytes).catch(() => {});
+      }
+
+      if (routed.kitchen.length > 0) {
+        const slip = buildOrderSlip(
+          tName,
+          routed.kitchen.map((i) => ({ name: productNames[i.productId] || i.productId, qty: i.qty, notes: i.notes ?? undefined })),
+          'kitchen',
+          clientLabel
+        );
+        const bytes = new TextEncoder().encode(slip);
+        sendToPrinter('kitchen', bytes).catch(() => {});
+      }
+    } catch {
+      // Printer failure is non-fatal
+    }
+
+    router.replace('/(tabs)/orders');
   };
 
   const handleMarkServed = async () => {
@@ -133,24 +195,18 @@ export default function OrderScreen() {
   };
 
   const handleVoidItem = (item: OrderItemModel) => {
-    Alert.prompt
-      ? Alert.prompt('Void Item', 'Enter reason for voiding:', async (reason) => {
-          if (reason) {
-            await voidOrderItem(item.id, reason, currentStaff!.id);
-            await loadOrder();
-          }
-        })
-      : Alert.alert('Void Item', 'Void this item?', [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Void',
-            style: 'destructive',
-            onPress: async () => {
-              await voidOrderItem(item.id, 'Voided by staff', currentStaff!.id);
-              await loadOrder();
-            },
-          },
-        ]);
+    setVoidingItem(item);
+    setVoidReason('');
+    setShowVoidModal(true);
+  };
+
+  const confirmVoidItem = async () => {
+    if (!voidingItem) return;
+    await voidOrderItem(voidingItem.id, voidReason.trim() || 'Voided by staff', currentStaff!.id);
+    setShowVoidModal(false);
+    setVoidingItem(null);
+    setVoidReason('');
+    await loadOrder();
   };
 
   const handleCashPayment = async () => {
@@ -391,14 +447,14 @@ export default function OrderScreen() {
     router.back();
   };
 
-  const handleSaveRoomNumber = async () => {
+  const handleSaveClientId = async () => {
     if (!order) return;
     await database.write(async () => {
       await order.update((o) => {
-        o.roomNumber = roomNumber || null;
+        o.roomNumber = clientId.trim() || null;
       });
     });
-    setShowRoomInput(false);
+    setShowClientInput(false);
     await loadOrder();
   };
 
@@ -408,6 +464,7 @@ export default function OrderScreen() {
   };
 
   const activeItems = items.filter((i) => !i.voided);
+  const pendingCount = activeItems.filter((i) => i.status === 'pending').length;
   const hasPendingItems = activeItems.some((i) => i.status === 'pending');
   const hasSentItems = activeItems.some((i) => i.status === 'sent');
 
@@ -428,16 +485,16 @@ export default function OrderScreen() {
     <SafeAreaView className="flex-1 bg-surface">
       {/* Header */}
       <View className="flex-row items-center justify-between p-4 bg-primary">
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => router.back()} className="w-16">
           <Text className="text-white text-lg">← Back</Text>
         </TouchableOpacity>
-        <View className="items-center">
-          <Text className="text-white text-lg font-bold">Order</Text>
+        <View className="items-center flex-1">
+          <Text className="text-white text-lg font-bold">{tableName}</Text>
           <Text className="text-gray-300 text-xs">{order.status.toUpperCase()}</Text>
         </View>
-        <TouchableOpacity onPress={() => setShowRoomInput(true)}>
-          <Text className="text-gray-300 text-sm">
-            {order.roomNumber ? `Room ${order.roomNumber}` : '+ Room'}
+        <TouchableOpacity onPress={() => setShowClientInput(true)} className="w-24 items-end">
+          <Text className="text-gray-300 text-sm" numberOfLines={1}>
+            {clientId ? clientId : '+ Client'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -523,7 +580,9 @@ export default function OrderScreen() {
               className="flex-1 bg-yellow-500 p-3 rounded-xl items-center mr-2"
               onPress={handleSendOrder}
             >
-              <Text className="text-white font-bold">Send</Text>
+              <Text className="text-white font-bold">
+                Send Order{pendingCount > 0 ? ` (${pendingCount})` : ''}
+              </Text>
             </TouchableOpacity>
           )}
 
@@ -532,16 +591,16 @@ export default function OrderScreen() {
               className="flex-1 bg-green-500 p-3 rounded-xl items-center mr-2"
               onPress={handleMarkServed}
             >
-              <Text className="text-white font-bold">Served</Text>
+              <Text className="text-white font-bold">Mark Served</Text>
             </TouchableOpacity>
           )}
 
-          {order.status === 'served' && order.totalAmount > 0 && (
+          {['sent', 'served', 'awaiting_payment'].includes(order.status) && order.totalAmount > 0 && (
             <TouchableOpacity
               className="flex-1 bg-accent p-3 rounded-xl items-center mb-2"
               onPress={() => setShowPayment(true)}
             >
-              <Text className="text-white font-bold">Pay</Text>
+              <Text className="text-white font-bold">Collect Payment</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -574,25 +633,40 @@ export default function OrderScreen() {
             </View>
           </ScrollView>
 
-          {/* Product List */}
-          <ScrollView className="flex-1 p-4">
-            {products.map((prod) => (
-              <TouchableOpacity
-                key={prod.id}
-                className={`bg-white rounded-xl p-4 mb-2 flex-row items-center justify-between border border-gray-100 ${prod.isOutOfStock || prod.stockQty <= 0 ? 'opacity-40' : ''}`}
-                onPress={() => handleAddItem(prod)}
-                disabled={prod.isOutOfStock || prod.stockQty <= 0}
-              >
-                <View>
-                  <Text className="text-base font-medium text-primary">{prod.name}</Text>
-                  <Text className="text-xs text-gray-500">Stock: {prod.stockQty} {prod.unit}s</Text>
-                </View>
-                <Text className="text-base font-bold text-primary">{formatKES(prod.price)}</Text>
-              </TouchableOpacity>
-            ))}
+          {/* Product Grid */}
+          <ScrollView className="flex-1 p-2">
             {products.length === 0 && (
               <Text className="text-gray-400 text-center mt-8">No products in this category</Text>
             )}
+            <View className="flex-row flex-wrap">
+              {products.map((prod) => {
+                const outOfStock = prod.isOutOfStock || prod.stockQty <= 0;
+                return (
+                  <TouchableOpacity
+                    key={prod.id}
+                    style={{ width: `${100 / numCols}%` }}
+                    className={`p-2`}
+                    onPress={() => handleAddItem(prod)}
+                    disabled={outOfStock}
+                  >
+                    <View className={`bg-white rounded-2xl p-4 border-2 items-center justify-center min-h-[110px] ${
+                      outOfStock ? 'border-gray-200 opacity-40' : 'border-gray-100 active:border-accent'
+                    }`}>
+                      <Text className="text-3xl mb-2">
+                        {prod.name.charAt(0).toUpperCase()}
+                      </Text>
+                      <Text className="text-sm font-bold text-primary text-center" numberOfLines={2}>{prod.name}</Text>
+                      <Text className="text-base font-bold text-accent mt-1">{formatKES(prod.price)}</Text>
+                      {outOfStock ? (
+                        <Text className="text-xs text-red-500 mt-1">Out of stock</Text>
+                      ) : (
+                        <Text className="text-xs text-gray-400 mt-1">Stock: {prod.stockQty}</Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -752,25 +826,26 @@ export default function OrderScreen() {
         </SafeAreaView>
       </Modal>
 
-      {/* Room Number Modal */}
-      <Modal visible={showRoomInput} transparent animationType="fade">
+      {/* Client Identifier Modal */}
+      <Modal visible={showClientInput} transparent animationType="fade">
         <View className="flex-1 bg-black/50 justify-center items-center p-8">
           <View className="bg-white rounded-2xl p-6 w-full max-w-sm">
-            <Text className="text-lg font-bold text-primary mb-4">Hotel Room Number</Text>
+            <Text className="text-lg font-bold text-primary mb-1">Customer / Table / Room</Text>
+            <Text className="text-xs text-gray-500 mb-4">e.g. Room 205, Table 7, John, Bar Seat 3</Text>
             <TextInput
               className="border border-gray-300 rounded-xl p-3 text-base mb-4"
-              value={roomNumber}
-              onChangeText={setRoomNumber}
-              placeholder="e.g. 101, 205"
+              value={clientId}
+              onChangeText={setClientId}
+              placeholder="Room 205, Table 7, John..."
               placeholderTextColor="#9ca3af"
-              keyboardType="numeric"
               autoFocus
+              autoCapitalize="words"
             />
             <View className="flex-row justify-end">
-              <TouchableOpacity className="px-4 py-2 mr-2" onPress={() => setShowRoomInput(false)}>
+              <TouchableOpacity className="px-4 py-2 mr-2" onPress={() => setShowClientInput(false)}>
                 <Text className="text-gray-500">Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity className="bg-primary px-6 py-2 rounded-lg" onPress={handleSaveRoomNumber}>
+              <TouchableOpacity className="bg-primary px-6 py-2 rounded-lg" onPress={handleSaveClientId}>
                 <Text className="text-white font-medium">Save</Text>
               </TouchableOpacity>
             </View>
@@ -810,6 +885,38 @@ export default function OrderScreen() {
               </TouchableOpacity>
               <TouchableOpacity className="bg-orange-500 px-6 py-2 rounded-lg" onPress={handleApplyDiscount}>
                 <Text className="text-white font-medium">Apply</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Void Item Modal */}
+      <Modal visible={showVoidModal} transparent animationType="fade">
+        <View className="flex-1 bg-black/50 justify-center items-center p-8">
+          <View className="bg-white rounded-2xl p-6 w-full max-w-sm">
+            <Text className="text-lg font-bold text-red-600 mb-1">Void Item</Text>
+            <Text className="text-sm text-gray-500 mb-4">
+              {voidingItem ? `${voidingItem.qty}x item` : ''}
+            </Text>
+            <Text className="text-sm font-medium text-gray-600 mb-1">Reason (optional)</Text>
+            <TextInput
+              className="border border-gray-300 rounded-xl p-3 text-base mb-4"
+              value={voidReason}
+              onChangeText={setVoidReason}
+              placeholder="e.g. Wrong order, customer changed mind"
+              placeholderTextColor="#9ca3af"
+              autoFocus
+            />
+            <View className="flex-row justify-end">
+              <TouchableOpacity
+                className="px-4 py-2 mr-2"
+                onPress={() => { setShowVoidModal(false); setVoidingItem(null); }}
+              >
+                <Text className="text-gray-500">Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity className="bg-red-600 px-6 py-2 rounded-lg" onPress={confirmVoidItem}>
+                <Text className="text-white font-medium">Void</Text>
               </TouchableOpacity>
             </View>
           </View>

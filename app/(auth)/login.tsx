@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, SafeAreaView, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
-import { findStaffByPin } from '@/lib/db/actions';
+import { findStaffByPin, getActiveShift } from '@/lib/db/actions';
 import { seedDatabase } from '@/lib/db/seed';
 
 export default function LoginScreen() {
@@ -39,17 +39,22 @@ export default function LoginScreen() {
     try {
       const staff = await findStaffByPin(enteredPin);
       if (staff) {
-        login({
-          id: staff.id,
-          name: staff.name,
-          role: staff.role as any,
-          pin: staff.pin,
-          phone: staff.phone,
-          is_active: staff.isActive,
-          created_at: staff.createdAt?.toISOString() || '',
-          updated_at: staff.updatedAt?.toISOString() || '',
-        });
-        router.replace('/(tabs)/tables');
+        // Restore any active shift for this staff member
+        const activeShift = await getActiveShift(staff.id);
+        login(
+          {
+            id: staff.id,
+            name: staff.name,
+            role: staff.role as any,
+            pin: staff.pin,
+            phone: staff.phone,
+            is_active: staff.isActive,
+            created_at: staff.createdAt?.toISOString() || '',
+            updated_at: staff.updatedAt?.toISOString() || '',
+          },
+          activeShift?.id ?? null
+        );
+        router.replace('/(tabs)/' as any);
       } else {
         setError('Invalid PIN');
         setPin('');
@@ -72,20 +77,37 @@ export default function LoginScreen() {
   ));
 
   const digits = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'];
+  const busy = seeding || loading;
+
+  if (seeding) {
+    return (
+      <SafeAreaView className="flex-1 bg-primary items-center justify-center">
+        <Text className="text-white text-3xl font-bold mb-4">Bar POS</Text>
+        <ActivityIndicator color="#e94560" size="large" />
+        <Text className="text-gray-400 text-sm mt-4">Setting up database…</Text>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-primary">
       <View className="flex-1 justify-center items-center px-8">
-        <Text className="text-white text-3xl font-bold mb-2">Bar POS</Text>
-        <Text className="text-gray-400 text-base mb-2">Enter your PIN to continue</Text>
-        <Text className="text-gray-600 text-xs mb-10">Default PINs: Admin=1234 · Cashier=5678 · Bartender=9012</Text>
+        <Text className="text-white text-4xl font-bold mb-1">Bar POS</Text>
+        <Text className="text-gray-400 text-base mb-10">Enter your PIN to continue</Text>
 
-        <View className="flex-row mb-8">{pinDots}</View>
+        {/* PIN dots */}
+        <View className="flex-row mb-3">{pinDots}</View>
 
-        {error ? (
-          <Text className="text-accent text-sm mb-4">{error}</Text>
-        ) : null}
+        {/* Error or loading state */}
+        <View className="h-7 justify-center mb-6">
+          {loading ? (
+            <ActivityIndicator color="#e94560" />
+          ) : error ? (
+            <Text className="text-accent text-sm text-center">{error}</Text>
+          ) : null}
+        </View>
 
+        {/* Numpad */}
         <View className="w-full max-w-xs">
           {[0, 1, 2, 3].map((row) => (
             <View key={row} className="flex-row justify-center mb-3">
@@ -94,12 +116,12 @@ export default function LoginScreen() {
                   key={i}
                   className={`w-20 h-20 rounded-full mx-2 justify-center items-center ${
                     digit ? 'bg-secondary' : 'bg-transparent'
-                  }`}
+                  } ${busy ? 'opacity-50' : ''}`}
                   onPress={() => {
                     if (digit === '⌫') handleDelete();
                     else if (digit) handlePinPress(digit);
                   }}
-                  disabled={!digit}
+                  disabled={!digit || busy}
                 >
                   <Text className="text-white text-2xl font-semibold">
                     {digit}

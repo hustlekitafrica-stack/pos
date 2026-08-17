@@ -1,9 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, SafeAreaView, Alert, TextInput, Modal } from 'react-native';
+import { useState, useCallback } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, SafeAreaView, Alert, TextInput, Modal, useWindowDimensions } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
+import Constants from 'expo-constants';
 import { useAuthStore } from '@/stores/authStore';
 import { getAllTables, createOrder, getActiveOrderForTable, createTable } from '@/lib/db/actions';
 import { RestaurantTable } from '@/lib/db/models';
+
+const DEVICE_ID = Constants.sessionId ?? Constants.expoConfig?.extra?.deviceId ?? 'device-unknown';
 
 export default function TablesScreen() {
   const [tables, setTables] = useState<RestaurantTable[]>([]);
@@ -12,6 +15,8 @@ export default function TablesScreen() {
   const currentStaff = useAuthStore((s) => s.currentStaff);
   const currentShiftId = useAuthStore((s) => s.currentShiftId);
   const can = useAuthStore((s) => s.can);
+  const { width } = useWindowDimensions();
+  const numCols = width >= 768 ? 4 : width >= 480 ? 3 : 2;
 
   const loadTables = useCallback(async () => {
     const data = await getAllTables();
@@ -39,7 +44,7 @@ export default function TablesScreen() {
           tableId: table.id,
           staffId: currentStaff!.id,
           shiftId: currentShiftId,
-          deviceId: 'device-1',
+          deviceId: DEVICE_ID,
         });
         await loadTables();
         router.push(`/order/${order.id}`);
@@ -82,46 +87,51 @@ export default function TablesScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-surface">
-      <View className="flex-row items-center justify-between px-4 pt-2 pb-1">
+      <View className="flex-row items-center justify-between px-4 pt-3 pb-2">
+        <TouchableOpacity onPress={() => router.back()} className="w-16">
+          <Text className="text-primary text-lg">← Home</Text>
+        </TouchableOpacity>
         <Text className="text-xl font-bold text-primary">Tables</Text>
         <View className="flex-row">
           {can('editMenu') && (
             <TouchableOpacity
-              className="bg-primary px-4 py-2 rounded-lg mr-2"
+              className="bg-primary px-3 py-2 rounded-lg mr-2"
               onPress={() => setShowAddTable(true)}
             >
-              <Text className="text-white font-medium">+ Table</Text>
+              <Text className="text-white font-medium text-sm">+ Table</Text>
             </TouchableOpacity>
           )}
           {!currentShiftId && (
             <TouchableOpacity
-              className="bg-green-600 px-4 py-2 rounded-lg"
+              className="bg-green-600 px-3 py-2 rounded-lg"
               onPress={() => router.push('/shift/open')}
             >
-              <Text className="text-white font-medium">Open Shift</Text>
+              <Text className="text-white font-medium text-sm">Open Shift</Text>
             </TouchableOpacity>
           )}
           {currentShiftId && (
             <TouchableOpacity
-              className="bg-red-600 px-4 py-2 rounded-lg"
+              className="bg-red-600 px-3 py-2 rounded-lg"
               onPress={() => router.push('/shift/close')}
             >
-              <Text className="text-white font-medium">Close Shift</Text>
+              <Text className="text-white font-medium text-sm">Close Shift</Text>
             </TouchableOpacity>
           )}
         </View>
       </View>
 
-      <ScrollView className="flex-1 p-4">
+      <ScrollView className="flex-1 p-3">
         <View className="flex-row flex-wrap">
           {tables.map((table) => (
             <TouchableOpacity
               key={table.id}
-              className={`w-[48%] m-[1%] p-4 rounded-xl border-2 ${getStatusColor(table.status)}`}
+              style={{ width: `${100 / numCols}%`, padding: 6 }}
               onPress={() => handleTablePress(table)}
             >
-              <Text className="text-lg font-bold text-primary">{table.name}</Text>
-              <Text className="text-sm text-gray-600 mt-1">{getStatusLabel(table.status)}</Text>
+              <View className={`p-4 rounded-2xl border-2 items-center justify-center min-h-[100px] ${getStatusColor(table.status)}`}>
+                <Text className="text-lg font-bold text-primary text-center">{table.name}</Text>
+                <Text className="text-xs text-gray-600 mt-1">{getStatusLabel(table.status)}</Text>
+              </View>
             </TouchableOpacity>
           ))}
         </View>

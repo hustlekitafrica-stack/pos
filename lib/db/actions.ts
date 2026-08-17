@@ -216,8 +216,10 @@ export async function recalculateOrderTotal(orderId: string): Promise<void> {
   }
 
   const order = await database.get<Order>('orders').find(orderId);
-  await order.update((o) => {
-    o.totalAmount = total - o.discountAmount;
+  await database.write(async () => {
+    await order.update((o) => {
+      o.totalAmount = Math.max(0, total - o.discountAmount);
+    });
   });
 }
 

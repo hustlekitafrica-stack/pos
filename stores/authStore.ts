@@ -6,7 +6,7 @@ interface AuthState {
   currentStaff: Staff | null;
   isAuthenticated: boolean;
   currentShiftId: string | null;
-  login: (staff: Staff) => void;
+  login: (staff: Staff, shiftId?: string | null) => void;
   logout: () => void;
   setShiftId: (shiftId: string | null) => void;
   can: (permission: keyof typeof PERMISSIONS) => boolean;
@@ -17,8 +17,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isAuthenticated: false,
   currentShiftId: null,
 
-  login: (staff: Staff) => {
-    set({ currentStaff: staff, isAuthenticated: true });
+  login: (staff: Staff, shiftId?: string | null) => {
+    set({ currentStaff: staff, isAuthenticated: true, currentShiftId: shiftId ?? null });
   },
 
   logout: () => {

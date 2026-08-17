@@ -13,6 +13,7 @@ export async function seedDatabase() {
   const adminPin = await hashPin('1234');
   const cashierPin = await hashPin('5678');
   const bartenderPin = await hashPin('9012');
+  const waiterPin = await hashPin('3456');
 
   await database.write(async () => {
     // Staff
@@ -36,6 +37,14 @@ export async function seedDatabase() {
       s.name = 'Mike (Bartender)';
       s.role = 'bartender';
       s.pin = bartenderPin;
+      s.phone = '';
+      s.isActive = true;
+    });
+
+    await database.get<Staff>('staff').create((s) => {
+      s.name = 'Sarah (Waiter)';
+      s.role = 'waiter';
+      s.pin = waiterPin;
       s.phone = '';
       s.isActive = true;
     });
