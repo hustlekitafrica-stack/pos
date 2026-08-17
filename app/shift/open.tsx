@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   SafeAreaView,
   Alert,
+  ActivityIndicator,
   Platform,
   StatusBar,
 } from 'react-native';
@@ -18,6 +19,7 @@ const STATUSBAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight ??
 
 export default function OpenShiftScreen() {
   const [openingCash, setOpeningCash] = useState('');
+  const [loading, setLoading] = useState(false);
   const currentStaff = useAuthStore((s) => s.currentStaff);
   const setShiftId = useAuthStore((s) => s.setShiftId);
   const logout = useAuthStore((s) => s.logout);
@@ -27,18 +29,18 @@ export default function OpenShiftScreen() {
   const isRequired = required === '1';
 
   const handleOpenShift = async () => {
-    if (!currentStaff) return;
-
-    // Check for existing active shift (e.g. resumed from another device)
-    const existing = await getActiveShift(currentStaff.id);
-    if (existing) {
-      setShiftId(existing.id);
-      router.replace('/(tabs)/' as any);
-      return;
-    }
-
-    const amountCents = toCents(parseFloat(openingCash) || 0);
+    if (!currentStaff || loading) return;
+    setLoading(true);
     try {
+      // Check for existing active shift (e.g. resumed from another device)
+      const existing = await getActiveShift(currentStaff.id);
+      if (existing) {
+        setShiftId(existing.id);
+        router.replace('/(tabs)/' as any);
+        return;
+      }
+
+      const amountCents = toCents(parseFloat(openingCash) || 0);
       const shift = await openShift(currentStaff.id, amountCents);
       setShiftId(shift.id);
       Alert.alert('Shift Started', `Opening cash: ${formatKES(amountCents)}`, [
@@ -49,6 +51,8 @@ export default function OpenShiftScreen() {
       ]);
     } catch (e) {
       Alert.alert('Error', 'Could not open shift. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -176,16 +180,22 @@ export default function OpenShiftScreen() {
         {/* Start Shift button */}
         <TouchableOpacity
           style={{
-            backgroundColor: '#16a34a',
+            backgroundColor: loading ? '#15803d' : '#16a34a',
             borderRadius: 16,
             paddingVertical: 16,
             alignItems: 'center',
+            opacity: loading ? 0.7 : 1,
           }}
           onPress={handleOpenShift}
+          disabled={loading}
         >
-          <Text style={{ color: '#fff', fontSize: 17, fontWeight: '800' }}>
-            Start Shift
-          </Text>
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={{ color: '#fff', fontSize: 17, fontWeight: '800' }}>
+              Start Shift
+            </Text>
+          )}
         </TouchableOpacity>
 
         {/* Log Out link (required mode) or Cancel link (optional mode) */}

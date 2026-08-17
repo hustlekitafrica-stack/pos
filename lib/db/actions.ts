@@ -193,8 +193,8 @@ export async function addItemToOrder(data: {
   unitPrice: number;
   notes?: string;
 }): Promise<OrderItem> {
-  return database.write(async () => {
-    const item = await database.get<OrderItem>('order_items').create((i) => {
+  const item = await database.write(async () => {
+    return database.get<OrderItem>('order_items').create((i) => {
       i.orderId = data.orderId;
       i.productId = data.productId;
       i.qty = data.qty;
@@ -208,12 +208,12 @@ export async function addItemToOrder(data: {
       i.voidReason = null;
       i.voidedBy = null;
     });
-
-    // Recalculate order total
-    await recalculateOrderTotal(data.orderId);
-
-    return item;
   });
+
+  // Recalculate order total AFTER the write commits so the query sees the new item
+  await recalculateOrderTotal(data.orderId);
+
+  return item;
 }
 
 export async function recalculateOrderTotal(orderId: string): Promise<void> {

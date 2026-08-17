@@ -413,10 +413,9 @@ export default function OrderScreen() {
     await database.write(async () => {
       // Create refund record
       await database.get('refunds').create((r: any) => {
-        r.orderId = order.id;
         r.amount = order.totalAmount;
         r.reason = refundReason.trim();
-        r.approvedBy = currentStaff!.id;
+        r.authorizedBy = currentStaff!.id;
       });
 
       // Restore stock for all non-voided sent items

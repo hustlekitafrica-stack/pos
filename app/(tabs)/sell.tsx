@@ -21,6 +21,7 @@ import { formatKES } from '@/utils/currency';
 import { database } from '@/lib/db';
 import {
   getProductsByStation,
+  getAllActiveProducts,
   getActiveOrderForTable,
   createOrder,
   addItemToOrder,
@@ -81,6 +82,7 @@ export default function SellScreen() {
   // Station / product state
   const [activeStation, setActiveStation] = useState<string>('bar');
   const [products, setProducts] = useState<Product[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [menuLoading, setMenuLoading] = useState(true);
 
   // Search
@@ -101,8 +103,12 @@ export default function SellScreen() {
   const loadProducts = useCallback(async (station: string) => {
     setMenuLoading(true);
     setSearchQuery('');
-    const prods = await getProductsByStation(station);
-    setProducts(prods);
+    const [stationProds, all] = await Promise.all([
+      getProductsByStation(station),
+      getAllActiveProducts(),
+    ]);
+    setProducts(stationProds);
+    setAllProducts(all);
     setMenuLoading(false);
   }, []);
 
@@ -152,8 +158,9 @@ export default function SellScreen() {
   const cartCount = cart.reduce((s, c) => s + c.qty, 0);
 
   // Filtered products for display
+  // When searching, look across ALL stations so no item is missed
   const visibleProducts = searchQuery.trim()
-    ? products.filter((p) =>
+    ? allProducts.filter((p) =>
         p.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
       )
     : products;
@@ -178,12 +185,14 @@ export default function SellScreen() {
       const identifier = clientIdentifier.trim() || 'Counter';
       const table = await findOrCreateTable(identifier);
 
-      const order = await createOrder({
+      // Re-use an existing active order for this table (append) or create a fresh one
+      const existingOrder = await getActiveOrderForTable(table.id);
+      const order = existingOrder ?? await createOrder({
         tableId: table.id,
         staffId: currentStaff!.id,
         shiftId: currentShiftId,
         deviceId: DEVICE_ID,
-        roomNumber: identifier !== table.name ? identifier : undefined,
+        roomNumber: identifier !== 'Counter' ? identifier : undefined,
       });
 
       for (const ci of cart) {
@@ -227,7 +236,7 @@ export default function SellScreen() {
             table.name,
             routed.bar.map((i) => ({ name: productNameMap[i.productId] ?? i.productId, qty: i.qty })),
             'bar',
-            identifier !== table.name ? identifier : undefined
+            identifier !== 'Counter' ? identifier : undefined
           );
           sendToPrinter('bar', new TextEncoder().encode(slip)).catch(() => {});
         }
@@ -236,7 +245,7 @@ export default function SellScreen() {
             table.name,
             routed.kitchen.map((i) => ({ name: productNameMap[i.productId] ?? i.productId, qty: i.qty })),
             'kitchen',
-            identifier !== table.name ? identifier : undefined
+            identifier !== 'Counter' ? identifier : undefined
           );
           sendToPrinter('kitchen', new TextEncoder().encode(slip)).catch(() => {});
         }
@@ -248,7 +257,7 @@ export default function SellScreen() {
       setCartDetailOpen(false);
       Alert.alert(
         'Order Sent ✓',
-        `Order for "${identifier}" sent to kitchen/bar.`,
+        `Order for "${identifier}" has been sent.`,
         [
           { text: 'New Order', style: 'cancel' },
           { text: 'View Orders', onPress: () => router.push('/(tabs)/orders') },
@@ -917,18 +926,18 @@ export default function SellScreen() {
       {/* Body */}
       {isTablet ? (
         <View style={{ flex: 1, flexDirection: 'row' }}>
-          <ProductArea />
-          <TabletCartPanel />
+          {ProductArea()}
+          {TabletCartPanel()}
         </View>
       ) : (
         <View style={{ flex: 1, flexDirection: 'column' }}>
-          <ProductArea />
-          <BottomBar />
+          {ProductArea()}
+          {BottomBar()}
         </View>
       )}
 
       {/* Cart detail sheet (phone only) */}
-      {!isTablet && <CartDetailSheet />}
+      {!isTablet && CartDetailSheet()}
     </SafeAreaView>
   );
 }

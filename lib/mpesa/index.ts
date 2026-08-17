@@ -29,6 +29,9 @@ export async function initiateSTKPush(
   amount: number,
   orderId: string
 ): Promise<MpesaSTKResponse> {
+  if (!supabase) {
+    return { success: false, errorMessage: 'M-Pesa payment gateway is not configured.' };
+  }
   try {
     // Call Supabase Edge Function or external API
     const { data, error } = await supabase.functions.invoke('mpesa-stk-push', {
@@ -59,6 +62,7 @@ export async function initiateSTKPush(
  * Calls the backend to check the status of an STK push.
  */
 export async function checkSTKStatus(checkoutRequestId: string): Promise<MpesaCallbackResult | null> {
+  if (!supabase) return null;
   try {
     const { data, error } = await supabase.functions.invoke('mpesa-stk-query', {
       body: { checkoutRequestId },

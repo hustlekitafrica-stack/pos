@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { View, Text, ScrollView, SafeAreaView, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, router } from 'expo-router';
 import { formatKES } from '@/utils/currency';
 import { useAuthStore } from '@/stores/authStore';
 import {
@@ -129,8 +129,11 @@ export default function ReportsScreen() {
   return (
     <SafeAreaView className="flex-1 bg-surface">
       {/* Header */}
-      <View className="px-4 pt-2 pb-1">
+      <View className="px-4 pt-3 pb-1">
         <View className="flex-row items-center justify-between">
+          <TouchableOpacity onPress={() => router.back()} className="w-16">
+            <Text className="text-primary text-lg">← Home</Text>
+          </TouchableOpacity>
           <Text className="text-xl font-bold text-primary">Reports</Text>
           <View className="flex-row">
             <TouchableOpacity className="bg-green-600 px-3 py-1.5 rounded-lg mr-2" onPress={() => handleExport('csv')}>

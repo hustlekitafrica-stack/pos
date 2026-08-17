@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { View, Text, ScrollView, SafeAreaView, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, router } from 'expo-router';
 import { database } from '@/lib/db';
 import { Expense, ExpenseCategory } from '@/lib/db/models';
 import { Q } from '@nozbe/watermelondb';
@@ -123,8 +123,11 @@ export default function ExpensesScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-surface">
-      <View className="flex-row items-center justify-between px-4 pt-2 pb-1">
+      <View className="flex-row items-center justify-between px-4 pt-3 pb-1">
         <View>
+          <TouchableOpacity onPress={() => router.back()} className="mb-0.5">
+            <Text className="text-primary text-lg">← Home</Text>
+          </TouchableOpacity>
           <Text className="text-xl font-bold text-primary">Expenses</Text>
           <Text className="text-sm text-gray-500">Today: {formatKES(todayTotal)}</Text>
         </View>

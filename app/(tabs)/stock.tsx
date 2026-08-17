@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { View, Text, ScrollView, SafeAreaView, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, router } from 'expo-router';
 import { database } from '@/lib/db';
 import { Product, StockAdjustment, Category } from '@/lib/db/models';
 import { Q } from '@nozbe/watermelondb';
@@ -86,8 +86,13 @@ export default function StockScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-surface">
-      <View className="px-4 pt-2 pb-1">
-        <Text className="text-xl font-bold text-primary">Stock Management</Text>
+      <View className="px-4 pt-3 pb-1">
+        <View className="flex-row items-center mb-1">
+          <TouchableOpacity onPress={() => router.back()} className="mr-4">
+            <Text className="text-primary text-lg">← Home</Text>
+          </TouchableOpacity>
+          <Text className="text-xl font-bold text-primary">Stock Management</Text>
+        </View>
         <View className="flex-row mt-1">
           {outOfStockCount > 0 && (
             <Text className="text-xs text-red-600 mr-3">{outOfStockCount} out of stock</Text>

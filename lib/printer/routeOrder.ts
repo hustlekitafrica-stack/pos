@@ -1,8 +1,8 @@
-import { OrderItem, Category, PrepStation } from '@/types';
+import { OrderItem as WDBOrderItem, Category as WDBCategory } from '@/lib/db/models';
 
 interface RoutedItems {
-  bar: OrderItem[];
-  kitchen: OrderItem[];
+  bar: WDBOrderItem[];
+  kitchen: WDBOrderItem[];
 }
 
 /**
@@ -10,22 +10,22 @@ interface RoutedItems {
  * Returns two arrays: items for the bar printer and items for the kitchen printer.
  */
 export function routeOrderItems(
-  items: OrderItem[],
-  getCategoryForProduct: (productId: string) => Category | null
+  items: WDBOrderItem[],
+  getCategoryForProduct: (productId: string) => WDBCategory | null
 ): RoutedItems {
   const routed: RoutedItems = { bar: [], kitchen: [] };
 
   for (const item of items) {
     if (item.voided) continue;
 
-    const category = getCategoryForProduct(item.product_id);
+    const category = getCategoryForProduct(item.productId);
     if (!category) {
       // Default to bar if category not found
       routed.bar.push(item);
       continue;
     }
 
-    if (category.prep_station === 'kitchen') {
+    if (category.prepStation === 'kitchen') {
       routed.kitchen.push(item);
     } else {
       routed.bar.push(item);

@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, SafeAreaView, Modal, TextInput, Alert, Switch, ActivityIndicator } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, router } from 'expo-router';
 import { formatKES, toCents } from '@/utils/currency';
 import { database } from '@/lib/db';
 import { Category, Product } from '@/lib/db/models';
@@ -39,13 +39,14 @@ export default function MenuScreen() {
     setLoading(true);
     const cats = await getAllCategories();
     setCategories(cats);
-    if (cats.length > 0 && !selectedCatId) {
-      setSelectedCatId(cats[0].id);
-      const prods = await getProductsByCategory(cats[0].id);
+    if (cats.length > 0) {
+      const targetId = selectedCatId ?? cats[0].id;
+      setSelectedCatId(targetId);
+      const prods = await getProductsByCategory(targetId);
       setProducts(prods);
     }
     setLoading(false);
-  }, []);
+  }, [selectedCatId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -139,7 +140,10 @@ export default function MenuScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-surface">
-      <View className="flex-row items-center justify-between px-4 pt-2 pb-1">
+      <View className="flex-row items-center justify-between px-4 pt-3 pb-2">
+        <TouchableOpacity onPress={() => router.back()} className="w-16">
+          <Text className="text-primary text-lg">← Home</Text>
+        </TouchableOpacity>
         <Text className="text-xl font-bold text-primary">Menu</Text>
         <View className="flex-row">
           <TouchableOpacity className="bg-primary px-3 py-2 rounded-lg mr-2" onPress={openAddCategory}>
@@ -192,12 +196,18 @@ export default function MenuScreen() {
                 onPress={() => openEditProduct(prod)}
               >
                 <View className="flex-1">
-                  <Text className="text-base font-medium text-primary">{prod.name}</Text>
+                  <Text className={`text-base font-medium ${prod.isActive ? 'text-primary' : 'text-gray-400'}`}>{prod.name}</Text>
                   <Text className="text-xs text-gray-500">
                     Cost: {formatKES(prod.costPrice)} · Stock: {prod.stockQty} {prod.unit}s
                   </Text>
                 </View>
                 <Text className="text-base font-bold text-primary mr-3">{formatKES(prod.price)}</Text>
+                <Switch
+                  value={prod.isActive}
+                  onValueChange={() => handleToggleProduct(prod)}
+                  trackColor={{ false: '#d1d5db', true: '#e94560' }}
+                  thumbColor="#fff"
+                />
               </TouchableOpacity>
             ))
           )}
