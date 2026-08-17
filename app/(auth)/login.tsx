@@ -54,7 +54,12 @@ export default function LoginScreen() {
           },
           activeShift?.id ?? null
         );
-        router.replace('/(tabs)/' as any);
+        // If no active shift → mandatory shift-start screen
+        if (activeShift) {
+          router.replace('/(tabs)/' as any);
+        } else {
+          router.replace('/shift/open?required=1' as any);
+        }
       } else {
         setError('Invalid PIN');
         setPin('');

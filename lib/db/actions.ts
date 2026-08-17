@@ -48,6 +48,20 @@ export async function getProductsByCategory(categoryId: string): Promise<Product
     .fetch();
 }
 
+export async function getProductsByStation(station: string): Promise<Product[]> {
+  // Fetch all categories for this prep station, then fetch all active products in them
+  const cats = await database
+    .get<Category>('categories')
+    .query(Q.where('prep_station', station))
+    .fetch();
+  if (cats.length === 0) return [];
+  const catIds = cats.map((c) => c.id);
+  return database
+    .get<Product>('products')
+    .query(Q.where('category_id', Q.oneOf(catIds)), Q.where('is_active', true))
+    .fetch();
+}
+
 export async function getAllActiveProducts(): Promise<Product[]> {
   return database
     .get<Product>('products')
