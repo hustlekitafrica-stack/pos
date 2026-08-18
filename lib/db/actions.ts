@@ -375,6 +375,66 @@ export async function recordPayment(data: {
   });
 }
 
+// ─── Split / Merge Orders ────────────────────────────────────────────────────
+
+export async function splitOrder(
+  originalOrderId: string,
+  itemIdsToSplit: string[]
+): Promise<Order> {
+  const original = await database.get<Order>('orders').find(originalOrderId);
+
+  const newOrder = await database.write(async () => {
+    return database.get<Order>('orders').create((o) => {
+      o.tableId = original.tableId;
+      o.staffId = original.staffId;
+      o.shiftId = original.shiftId;
+      o.deviceId = original.deviceId;
+      o.roomNumber = original.roomNumber;
+      o.customerId = null;
+      o.isCredit = false;
+      o.status = original.status;
+      o.openedAt = new Date();
+      o.discountAmount = 0;
+      o.discountReason = null;
+      o.totalAmount = 0;
+    });
+  });
+
+  await database.write(async () => {
+    for (const itemId of itemIdsToSplit) {
+      const item = await database.get<OrderItem>('order_items').find(itemId);
+      await item.update((i) => { i.orderId = newOrder.id; });
+    }
+  });
+
+  await recalculateOrderTotal(originalOrderId);
+  await recalculateOrderTotal(newOrder.id);
+  return newOrder;
+}
+
+export async function mergeOrders(
+  sourceOrderId: string,
+  targetOrderId: string
+): Promise<void> {
+  const items = await database
+    .get<OrderItem>('order_items')
+    .query(Q.where('order_id', sourceOrderId))
+    .fetch();
+
+  await database.write(async () => {
+    for (const item of items) {
+      await item.update((i) => { i.orderId = targetOrderId; });
+    }
+    const source = await database.get<Order>('orders').find(sourceOrderId);
+    await source.update((o) => {
+      o.status = 'closed';
+      o.closedAt = new Date();
+    });
+  });
+
+  await recalculateOrderTotal(targetOrderId);
+}
+
 // ─── Shifts ─────────────────────────────────────────────────────────────────
 
 export async function openShift(staffId: string, openingCash: number): Promise<Shift> {

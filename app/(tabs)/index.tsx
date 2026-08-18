@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, SafeAreaView, useWindowDimensions, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, useWindowDimensions, Alert } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '@/stores/authStore';
 
 interface Tile {
   id: string;
   label: string;
-  emoji: string;
+  icon: string;
   route: string;
   permission: string | null;
   accent: string;
@@ -18,17 +20,17 @@ const TILES: Tile[] = [
   {
     id: 'sell',
     label: 'Sell',
-    emoji: '🍽️',
+    icon: 'shopping-bag',
     route: '/(tabs)/sell',
     permission: 'takeOrders',
-    accent: '#e94560',
+    accent: '#4338CA',
     bg: '#fff1f3',
     description: 'Take new orders',
   },
   {
     id: 'orders',
     label: 'Orders',
-    emoji: '📋',
+    icon: 'clipboard',
     route: '/(tabs)/orders',
     permission: null,
     accent: '#f59e0b',
@@ -36,19 +38,9 @@ const TILES: Tile[] = [
     description: 'View active orders',
   },
   {
-    id: 'floor',
-    label: 'Floor View',
-    emoji: '🪑',
-    route: '/(tabs)/tables',
-    permission: 'takeOrders',
-    accent: '#06b6d4',
-    bg: '#f0fdff',
-    description: 'Tables & tabs',
-  },
-  {
     id: 'reports',
     label: 'Reports',
-    emoji: '📊',
+    icon: 'bar-chart-2',
     route: '/(tabs)/reports',
     permission: 'viewAllReports',
     accent: '#6366f1',
@@ -58,9 +50,9 @@ const TILES: Tile[] = [
   {
     id: 'stock',
     label: 'Inventory',
-    emoji: '📦',
+    icon: 'package',
     route: '/(tabs)/stock',
-    permission: 'adjustStock',
+    permission: 'viewInventory',
     accent: '#10b981',
     bg: '#ecfdf5',
     description: 'Stock levels',
@@ -68,7 +60,7 @@ const TILES: Tile[] = [
   {
     id: 'menu',
     label: 'Menu',
-    emoji: '🍴',
+    icon: 'book-open',
     route: '/(tabs)/menu',
     permission: 'editMenu',
     accent: '#0ea5e9',
@@ -78,7 +70,7 @@ const TILES: Tile[] = [
   {
     id: 'expenses',
     label: 'Expenses',
-    emoji: '💰',
+    icon: 'credit-card',
     route: '/(tabs)/expenses',
     permission: 'manageExpenses',
     accent: '#f97316',
@@ -88,7 +80,7 @@ const TILES: Tile[] = [
   {
     id: 'debtors',
     label: 'Credit',
-    emoji: '👥',
+    icon: 'users',
     route: '/(tabs)/debtors',
     permission: 'viewDebtors',
     accent: '#8b5cf6',
@@ -98,7 +90,7 @@ const TILES: Tile[] = [
   {
     id: 'settings',
     label: 'Settings',
-    emoji: '⚙️',
+    icon: 'settings',
     route: '/(tabs)/settings',
     permission: 'manageStaff',
     accent: '#64748b',
@@ -153,7 +145,7 @@ export default function DashboardScreen() {
     : '';
 
   return (
-    <SafeAreaView className="flex-1 bg-[#0f172a]">
+    <SafeAreaView className="flex-1 bg-[#1e1b4b]">
       {/* Header */}
       <View className="px-5 pt-4 pb-3 flex-row items-start justify-between">
         <View className="flex-1">
@@ -210,7 +202,7 @@ export default function DashboardScreen() {
                 style={{
                   width: tileSize,
                   height: tileSize,
-                  backgroundColor: allowed ? tile.bg : '#1e293b',
+                  backgroundColor: allowed ? tile.bg : '#1e1b4b',
                   borderRadius: 20,
                   padding: 16,
                   justifyContent: 'space-between',
@@ -222,9 +214,13 @@ export default function DashboardScreen() {
                 activeOpacity={0.8}
               >
                 <View className="flex-row items-start justify-between">
-                  <Text style={{ fontSize: tileSize * 0.28 }}>{tile.emoji}</Text>
+                  <Feather
+                    name={tile.icon as any}
+                    size={Math.round(tileSize * 0.28)}
+                    color={allowed ? tile.accent : '#64748b'}
+                  />
                   {!allowed && (
-                    <Text style={{ fontSize: 14, color: '#64748b' }}>🔒</Text>
+                    <Feather name="lock" size={14} color="#64748b" />
                   )}
                 </View>
                 <View>
@@ -232,7 +228,7 @@ export default function DashboardScreen() {
                     style={{
                       fontSize: tileSize < 120 ? 13 : 15,
                       fontWeight: '700',
-                      color: allowed ? '#1e293b' : '#64748b',
+                      color: allowed ? '#1e1b4b' : '#64748b',
                     }}
                     numberOfLines={1}
                   >
@@ -259,10 +255,10 @@ export default function DashboardScreen() {
 
       {/* Sign Out */}
       <TouchableOpacity
-        className="mx-5 mb-5 py-3 rounded-xl items-center border border-slate-700"
+        className="mb-5 items-center py-2"
         onPress={logout}
       >
-        <Text className="text-slate-400 text-sm font-medium">Sign Out</Text>
+        <Text className="text-slate-500 text-sm">Sign Out</Text>
       </TouchableOpacity>
     </SafeAreaView>
   );

@@ -4,18 +4,14 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  SafeAreaView,
   Alert,
   ActivityIndicator,
-  Platform,
-  StatusBar,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { formatKES, toCents } from '@/utils/currency';
 import { useAuthStore } from '@/stores/authStore';
 import { openShift, getActiveShift } from '@/lib/db/actions';
-
-const STATUSBAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0;
 
 export default function OpenShiftScreen() {
   const [openingCash, setOpeningCash] = useState('');
@@ -62,15 +58,15 @@ export default function OpenShiftScreen() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#0f172a' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#1e1b4b' }}>
       {/* Header */}
       <View
         style={{
-          paddingTop: STATUSBAR_HEIGHT + 8,
+          paddingTop: 8,
           paddingHorizontal: 20,
           paddingBottom: 12,
           borderBottomWidth: 1,
-          borderBottomColor: '#1e293b',
+          borderBottomColor: '#1e1b4b',
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -100,7 +96,7 @@ export default function OpenShiftScreen() {
                 width: 72,
                 height: 72,
                 borderRadius: 36,
-                backgroundColor: '#e94560',
+                backgroundColor: '#4338CA',
                 alignItems: 'center',
                 justifyContent: 'center',
                 marginBottom: 12,
@@ -155,7 +151,7 @@ export default function OpenShiftScreen() {
         </Text>
         <TextInput
           style={{
-            backgroundColor: '#1e293b',
+            backgroundColor: '#1e1b4b',
             borderWidth: 1,
             borderColor: '#334155',
             borderRadius: 14,

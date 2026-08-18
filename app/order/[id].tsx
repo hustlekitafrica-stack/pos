@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, SafeAreaView, Alert, Modal, TextInput, useWindowDimensions } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, Modal, TextInput, useWindowDimensions } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import { formatKES, toCents } from '@/utils/currency';
 import { useAuthStore } from '@/stores/authStore';
@@ -20,6 +21,8 @@ import {
   getAllCategories,
   getProductsByCategory,
   recalculateOrderTotal,
+  splitOrder,
+  mergeOrders,
 } from '@/lib/db/actions';
 
 export default function OrderScreen() {
@@ -45,14 +48,18 @@ export default function OrderScreen() {
   const [splitMpesaAmount, setSplitMpesaAmount] = useState('');
   const [creditCustomers, setCreditCustomers] = useState<CustomerModel[]>([]);
   const [clientId, setClientId] = useState('');
-  const [showDiscount, setShowDiscount] = useState(false);
-  const [discountAmount, setDiscountAmount] = useState('');
-  const [discountReason, setDiscountReason] = useState('');
+
   const [showRefund, setShowRefund] = useState(false);
   const [refundReason, setRefundReason] = useState('');
   const [showVoidModal, setShowVoidModal] = useState(false);
   const [voidingItem, setVoidingItem] = useState<OrderItemModel | null>(null);
   const [voidReason, setVoidReason] = useState('');
+  // Split bill
+  const [showSplitBill, setShowSplitBill] = useState(false);
+  const [splitSelectedIds, setSplitSelectedIds] = useState<Set<string>>(new Set());
+  // Merge bills
+  const [showMergeBills, setShowMergeBills] = useState(false);
+  const [mergeableOrders, setMergeableOrders] = useState<{ order: OrderModel; tableName: string; itemCount: number }[]>([]);
   const [categories, setCategories] = useState<CategoryModel[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductModel[]>([]);
@@ -370,22 +377,7 @@ export default function OrderScreen() {
     setShowCreditPicker(true);
   };
 
-  const handleApplyDiscount = async () => {
-    if (!order) return;
-    const cents = toCents(parseFloat(discountAmount) || 0);
-    if (cents <= 0) return;
-    await database.write(async () => {
-      await order.update((o) => {
-        o.discountAmount = cents;
-        o.discountReason = discountReason.trim() || null;
-      });
-    });
-    await recalculateOrderTotal(order.id);
-    setShowDiscount(false);
-    setDiscountAmount('');
-    setDiscountReason('');
-    await loadOrder();
-  };
+
 
   const handleToggleComp = async (item: OrderItemModel) => {
     await database.write(async () => {
@@ -455,6 +447,85 @@ export default function OrderScreen() {
     });
     setShowClientInput(false);
     await loadOrder();
+  };
+
+  // ── Split Bill ──────────────────────────────────────────────────────────────
+  const openSplitBill = () => {
+    setSplitSelectedIds(new Set());
+    setShowSplitBill(true);
+  };
+
+  const toggleSplitItem = (itemId: string) => {
+    setSplitSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+  };
+
+  const handleConfirmSplit = async () => {
+    if (!order) return;
+    if (splitSelectedIds.size === 0) {
+      Alert.alert('Select Items', 'Select at least one item to move to a new bill.');
+      return;
+    }
+    if (splitSelectedIds.size >= activeItems.length) {
+      Alert.alert('Invalid Split', 'At least one item must remain in the current bill.');
+      return;
+    }
+    const newOrder = await splitOrder(order.id, Array.from(splitSelectedIds));
+    setShowSplitBill(false);
+    Alert.alert('Bill Split', 'Items have been moved to a new bill.', [
+      { text: 'View New Bill', onPress: () => router.replace(`/order/${newOrder.id}` as any) },
+      { text: 'Stay Here', onPress: () => loadOrder() },
+    ]);
+  };
+
+  // ── Merge Bills ─────────────────────────────────────────────────────────────
+  const openMergeBills = async () => {
+    if (!order) return;
+    const all = await database
+      .get<OrderModel>('orders')
+      .query(Q.where('status', Q.notIn(['paid', 'closed', 'voided'])))
+      .fetch();
+    const others = all.filter((o) => o.id !== order.id);
+    const cards: { order: OrderModel; tableName: string; itemCount: number }[] = [];
+    for (const o of others) {
+      let tName = 'Table';
+      try {
+        const tbl = await database.get<TableModel>('restaurant_tables').find(o.tableId);
+        tName = tbl.name;
+      } catch {}
+      const oi = await database
+        .get('order_items')
+        .query(Q.where('order_id', o.id), Q.where('voided', false))
+        .fetch();
+      cards.push({ order: o, tableName: tName, itemCount: oi.length });
+    }
+    setMergeableOrders(cards);
+    setShowMergeBills(true);
+  };
+
+  const handleMergeInto = (sourceOrder: OrderModel, sourceName: string) => {
+    if (!order) return;
+    Alert.alert(
+      'Merge Bills',
+      `Move all items from "${sourceName}" into this bill?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Merge',
+          style: 'destructive',
+          onPress: async () => {
+            await mergeOrders(sourceOrder.id, order.id);
+            setShowMergeBills(false);
+            await loadOrder();
+            Alert.alert('Merged', 'Bills have been merged successfully.');
+          },
+        },
+      ]
+    );
   };
 
   const openMenuModal = async () => {
@@ -537,12 +608,7 @@ export default function OrderScreen() {
 
       {/* Footer */}
       <View className="p-4 bg-white border-t border-gray-200">
-        {order.discountAmount > 0 && (
-          <View className="flex-row justify-between mb-1">
-            <Text className="text-sm text-gray-500">Discount</Text>
-            <Text className="text-sm text-green-600">-{formatKES(order.discountAmount)}</Text>
-          </View>
-        )}
+
         <View className="flex-row justify-between mb-3">
           <Text className="text-lg font-bold text-primary">Total</Text>
           <Text className="text-lg font-bold text-primary">{formatKES(order.totalAmount)}</Text>
@@ -556,14 +622,7 @@ export default function OrderScreen() {
             <Text className="text-white font-bold">Add Items</Text>
           </TouchableOpacity>
 
-          {can('applyDiscount') && order.status !== 'paid' && order.status !== 'voided' && (
-            <TouchableOpacity
-              className="bg-orange-500 p-3 rounded-xl items-center mr-2 mb-2 px-4"
-              onPress={() => setShowDiscount(true)}
-            >
-              <Text className="text-white font-bold text-xs">Discount</Text>
-            </TouchableOpacity>
-          )}
+
 
           {can('processRefund') && (order.status === 'paid' || order.status === 'served') && (
             <TouchableOpacity
@@ -571,6 +630,24 @@ export default function OrderScreen() {
               onPress={() => setShowRefund(true)}
             >
               <Text className="text-white font-bold text-xs">Refund</Text>
+            </TouchableOpacity>
+          )}
+
+          {!['paid', 'closed', 'voided'].includes(order.status) && activeItems.length >= 2 && (
+            <TouchableOpacity
+              className="bg-indigo-500 p-3 rounded-xl items-center mr-2 mb-2 px-4"
+              onPress={openSplitBill}
+            >
+              <Text className="text-white font-bold text-xs">Split Bill</Text>
+            </TouchableOpacity>
+          )}
+
+          {!['paid', 'closed', 'voided'].includes(order.status) && (
+            <TouchableOpacity
+              className="bg-teal-600 p-3 rounded-xl items-center mr-2 mb-2 px-4"
+              onPress={openMergeBills}
+            >
+              <Text className="text-white font-bold text-xs">Merge</Text>
             </TouchableOpacity>
           )}
 
@@ -585,14 +662,6 @@ export default function OrderScreen() {
             </TouchableOpacity>
           )}
 
-          {hasSentItems && (
-            <TouchableOpacity
-              className="flex-1 bg-green-500 p-3 rounded-xl items-center mr-2"
-              onPress={handleMarkServed}
-            >
-              <Text className="text-white font-bold">Mark Served</Text>
-            </TouchableOpacity>
-          )}
 
           {['sent', 'served', 'awaiting_payment'].includes(order.status) && order.totalAmount > 0 && (
             <TouchableOpacity
@@ -851,44 +920,7 @@ export default function OrderScreen() {
           </View>
         </View>
       </Modal>
-      {/* Discount Modal */}
-      <Modal visible={showDiscount} transparent animationType="fade">
-        <View className="flex-1 bg-black/50 justify-center items-center p-8">
-          <View className="bg-white rounded-2xl p-6 w-full max-w-sm">
-            <Text className="text-lg font-bold text-primary mb-2">Apply Discount</Text>
-            <Text className="text-sm text-gray-500 mb-4">Current total: {formatKES(order.totalAmount)}</Text>
 
-            <Text className="text-sm font-medium text-gray-600 mb-1">Discount Amount (KES)</Text>
-            <TextInput
-              className="border border-gray-300 rounded-xl p-3 text-base mb-3"
-              value={discountAmount}
-              onChangeText={setDiscountAmount}
-              placeholder="0.00"
-              placeholderTextColor="#9ca3af"
-              keyboardType="numeric"
-              autoFocus
-            />
-
-            <Text className="text-sm font-medium text-gray-600 mb-1">Reason (optional)</Text>
-            <TextInput
-              className="border border-gray-300 rounded-xl p-3 text-base mb-4"
-              value={discountReason}
-              onChangeText={setDiscountReason}
-              placeholder="e.g. Regular customer, promo"
-              placeholderTextColor="#9ca3af"
-            />
-
-            <View className="flex-row justify-end">
-              <TouchableOpacity className="px-4 py-2 mr-2" onPress={() => setShowDiscount(false)}>
-                <Text className="text-gray-500">Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity className="bg-orange-500 px-6 py-2 rounded-lg" onPress={handleApplyDiscount}>
-                <Text className="text-white font-medium">Apply</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {/* Void Item Modal */}
       <Modal visible={showVoidModal} transparent animationType="fade">
@@ -920,6 +952,99 @@ export default function OrderScreen() {
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* Split Bill Modal */}
+      <Modal visible={showSplitBill} animationType="slide">
+        <SafeAreaView className="flex-1 bg-surface">
+          <View className="flex-row items-center justify-between p-4 bg-primary">
+            <TouchableOpacity onPress={() => setShowSplitBill(false)}>
+              <Text className="text-white text-lg">Cancel</Text>
+            </TouchableOpacity>
+            <Text className="text-white text-lg font-bold">Split Bill</Text>
+            <TouchableOpacity onPress={handleConfirmSplit}>
+              <Text className="text-white text-lg font-semibold">Create</Text>
+            </TouchableOpacity>
+          </View>
+          <Text className="text-sm text-gray-500 px-4 py-2">
+            Tick items to move to a new bill:
+          </Text>
+          <ScrollView className="flex-1 px-4">
+            {activeItems.map((item) => {
+              const selected = splitSelectedIds.has(item.id);
+              return (
+                <TouchableOpacity
+                  key={item.id}
+                  className={`flex-row items-center p-3 mb-2 rounded-xl border ${selected ? 'border-indigo-400 bg-indigo-50' : 'border-gray-100 bg-white'}`}
+                  onPress={() => toggleSplitItem(item.id)}
+                >
+                  <Text className={`text-xl mr-3 ${selected ? 'text-indigo-600' : 'text-gray-300'}`}>
+                    {selected ? '☑' : '☐'}
+                  </Text>
+                  <View className="flex-1">
+                    <Text className="text-base font-medium text-primary">
+                      {item.qty}x {productNames[item.productId] || '...'}
+                    </Text>
+                  </View>
+                  <Text className="text-sm font-medium text-primary">
+                    {item.isComplimentary ? 'FREE' : formatKES(item.unitPrice * item.qty)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          <View className="p-4 bg-white border-t border-gray-200">
+            <Text className="text-sm text-gray-500 text-center mb-3">
+              {splitSelectedIds.size} item{splitSelectedIds.size !== 1 ? 's' : ''} selected for new bill
+            </Text>
+            <TouchableOpacity
+              className="bg-indigo-500 p-4 rounded-xl items-center"
+              onPress={handleConfirmSplit}
+            >
+              <Text className="text-white font-bold text-lg">Create New Bill</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Merge Bills Modal */}
+      <Modal visible={showMergeBills} animationType="slide">
+        <SafeAreaView className="flex-1 bg-surface">
+          <View className="flex-row items-center justify-between p-4 bg-primary">
+            <TouchableOpacity onPress={() => setShowMergeBills(false)}>
+              <Text className="text-white text-lg">Cancel</Text>
+            </TouchableOpacity>
+            <Text className="text-white text-lg font-bold">Merge Bills</Text>
+            <View className="w-16" />
+          </View>
+          <Text className="text-sm text-gray-500 px-4 py-2">
+            Select a bill to merge INTO this one ({tableName}):
+          </Text>
+          <ScrollView className="flex-1 px-4">
+            {mergeableOrders.length === 0 ? (
+              <Text className="text-gray-400 text-center mt-12">No other active bills to merge.</Text>
+            ) : (
+              mergeableOrders.map(({ order: o, tableName: tName, itemCount }) => (
+                <TouchableOpacity
+                  key={o.id}
+                  className="bg-white rounded-xl p-4 mb-2 border border-gray-100"
+                  onPress={() => handleMergeInto(o, tName)}
+                >
+                  <View className="flex-row justify-between items-center">
+                    <View>
+                      <Text className="text-base font-bold text-primary">{tName}</Text>
+                      {o.roomNumber ? <Text className="text-xs text-gray-500">{o.roomNumber}</Text> : null}
+                      <Text className="text-xs text-gray-400 mt-0.5">
+                        {itemCount} item{itemCount !== 1 ? 's' : ''}
+                      </Text>
+                    </View>
+                    <Text className="text-base font-bold text-primary">{formatKES(o.totalAmount)}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
+        </SafeAreaView>
       </Modal>
 
       {/* Refund Modal */}

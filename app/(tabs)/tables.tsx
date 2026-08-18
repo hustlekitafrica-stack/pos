@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, SafeAreaView, Alert, TextInput, Modal, useWindowDimensions } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, TextInput, Modal, useWindowDimensions } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import Constants from 'expo-constants';
 import { useAuthStore } from '@/stores/authStore';

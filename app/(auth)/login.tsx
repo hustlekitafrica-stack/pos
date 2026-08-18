@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, SafeAreaView, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
 import { findStaffByPin, getActiveShift } from '@/lib/db/actions';
@@ -88,7 +89,7 @@ export default function LoginScreen() {
     return (
       <SafeAreaView className="flex-1 bg-primary items-center justify-center">
         <Text className="text-white text-3xl font-bold mb-4">Bar POS</Text>
-        <ActivityIndicator color="#e94560" size="large" />
+        <ActivityIndicator color="#4338CA" size="large" />
         <Text className="text-gray-400 text-sm mt-4">Setting up database…</Text>
       </SafeAreaView>
     );
@@ -106,7 +107,7 @@ export default function LoginScreen() {
         {/* Error or loading state */}
         <View className="h-7 justify-center mb-6">
           {loading ? (
-            <ActivityIndicator color="#e94560" />
+            <ActivityIndicator color="#4338CA" />
           ) : error ? (
             <Text className="text-accent text-sm text-center">{error}</Text>
           ) : null}

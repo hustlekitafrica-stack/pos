@@ -4,16 +4,15 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  SafeAreaView,
   Alert,
   TextInput,
   Modal,
   ActivityIndicator,
   useWindowDimensions,
-  Platform,
-  StatusBar,
   KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import Constants from 'expo-constants';
 import { useAuthStore } from '@/stores/authStore';
@@ -40,8 +39,6 @@ import { Q } from '@nozbe/watermelondb';
 
 const DEVICE_ID = Constants.sessionId ?? Constants.expoConfig?.extra?.deviceId ?? 'device-unknown';
 
-// Android status bar height so the header doesn't hide under the notification bar
-const STATUSBAR_HEIGHT = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0;
 
 interface CartItem {
   product: Product;
@@ -152,6 +149,10 @@ export default function SellScreen() {
   const clearCart = () => {
     setCart([]);
     setClientIdentifier('');
+  };
+
+  const removeFromCart = (productId: string) => {
+    setCart((prev) => prev.filter((c) => c.product.id !== productId));
   };
 
   const cartTotal = cart.reduce((s, c) => s + c.product.price * c.qty, 0);
@@ -306,14 +307,14 @@ export default function SellScreen() {
                 paddingVertical: 10,
                 marginRight: 4,
                 borderBottomWidth: 3,
-                borderBottomColor: active ? '#e94560' : 'transparent',
+                borderBottomColor: active ? '#4338CA' : 'transparent',
               }}
             >
               <Text
                 style={{
                   fontSize: 15,
                   fontWeight: active ? '700' : '500',
-                  color: active ? '#e94560' : '#64748b',
+                  color: active ? '#4338CA' : '#64748b',
                 }}
               >
                 {label}
@@ -345,7 +346,7 @@ export default function SellScreen() {
         >
           <Text style={{ color: '#94a3b8', fontSize: 15, marginRight: 6 }}>🔍</Text>
           <TextInput
-            style={{ flex: 1, fontSize: 14, color: '#1e293b', paddingVertical: 0 }}
+            style={{ flex: 1, fontSize: 14, color: '#1e1b4b', paddingVertical: 0 }}
             value={searchQuery}
             onChangeText={setSearchQuery}
             placeholder="Search items…"
@@ -364,7 +365,7 @@ export default function SellScreen() {
       {/* Products */}
       {menuLoading ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator size="large" color="#e94560" />
+          <ActivityIndicator size="large" color="#4338CA" />
         </View>
       ) : (
         <ScrollView
@@ -395,7 +396,7 @@ export default function SellScreen() {
                         borderRadius: 14,
                         padding: 12,
                         borderWidth: 2,
-                        borderColor: cartQty > 0 ? '#e94560' : outOfStock ? '#e2e8f0' : '#f1f5f9',
+                        borderColor: cartQty > 0 ? '#4338CA' : outOfStock ? '#e2e8f0' : '#f1f5f9',
                         minHeight: 110,
                         justifyContent: 'space-between',
                         opacity: outOfStock ? 0.55 : 1,
@@ -405,20 +406,33 @@ export default function SellScreen() {
                         <View
                           style={{
                             position: 'absolute',
-                            top: 8,
-                            right: 8,
-                            backgroundColor: '#e94560',
-                            borderRadius: 11,
-                            minWidth: 22,
-                            height: 22,
+                            top: 6,
+                            right: 6,
+                            flexDirection: 'row',
                             alignItems: 'center',
-                            justifyContent: 'center',
-                            paddingHorizontal: 4,
+                            backgroundColor: '#1e1b4b',
+                            borderRadius: 12,
+                            paddingHorizontal: 2,
+                            paddingVertical: 2,
                           }}
                         >
-                          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>
+                          <TouchableOpacity
+                            onPress={() => changeQty(prod.id, -1)}
+                            hitSlop={{ top: 6, bottom: 6, left: 6, right: 4 }}
+                            style={{ paddingHorizontal: 5 }}
+                          >
+                            <Text style={{ color: '#4338CA', fontSize: 15, fontWeight: '800', lineHeight: 19 }}>−</Text>
+                          </TouchableOpacity>
+                          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800', minWidth: 14, textAlign: 'center' }}>
                             {cartQty}
                           </Text>
+                          <TouchableOpacity
+                            onPress={() => addToCart(prod)}
+                            hitSlop={{ top: 6, bottom: 6, left: 4, right: 6 }}
+                            style={{ paddingHorizontal: 5 }}
+                          >
+                            <Text style={{ color: '#4338CA', fontSize: 15, fontWeight: '800', lineHeight: 19 }}>+</Text>
+                          </TouchableOpacity>
                         </View>
                       )}
                       <Text style={{ fontSize: 26, marginBottom: 6 }}>
@@ -426,13 +440,13 @@ export default function SellScreen() {
                       </Text>
                       <View>
                         <Text
-                          style={{ fontSize: 12, fontWeight: '700', color: '#1e293b' }}
+                          style={{ fontSize: 12, fontWeight: '700', color: '#1e1b4b' }}
                           numberOfLines={2}
                         >
                           {prod.name}
                         </Text>
                         <Text
-                          style={{ fontSize: 13, fontWeight: '800', color: '#e94560', marginTop: 2 }}
+                          style={{ fontSize: 13, fontWeight: '800', color: '#4338CA', marginTop: 2 }}
                         >
                           {formatKES(prod.price)}
                         </Text>
@@ -474,7 +488,7 @@ export default function SellScreen() {
       >
         <View
           style={{
-            backgroundColor: '#0f172a',
+            backgroundColor: '#1e1b4b',
             borderTopLeftRadius: 20,
             borderTopRightRadius: 20,
             maxHeight: 420,
@@ -488,7 +502,7 @@ export default function SellScreen() {
               justifyContent: 'space-between',
               padding: 16,
               borderBottomWidth: 1,
-              borderBottomColor: '#1e293b',
+              borderBottomColor: '#1e1b4b',
             }}
           >
             <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
@@ -522,7 +536,7 @@ export default function SellScreen() {
                   style={{
                     flexDirection: 'row',
                     alignItems: 'center',
-                    backgroundColor: '#1e293b',
+                    backgroundColor: '#1e1b4b',
                     borderRadius: 10,
                     padding: 10,
                     marginBottom: 6,
@@ -581,7 +595,7 @@ export default function SellScreen() {
                   </View>
                   <Text
                     style={{
-                      color: '#e94560',
+                      color: '#4338CA',
                       fontSize: 13,
                       fontWeight: '700',
                       minWidth: 64,
@@ -590,6 +604,13 @@ export default function SellScreen() {
                   >
                     {formatKES(ci.product.price * ci.qty)}
                   </Text>
+                  <TouchableOpacity
+                    onPress={() => removeFromCart(ci.product.id)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={{ marginLeft: 10, padding: 4 }}
+                  >
+                    <Text style={{ color: '#475569', fontSize: 15 }}>✕</Text>
+                  </TouchableOpacity>
                 </View>
               ))
             )}
@@ -606,9 +627,9 @@ export default function SellScreen() {
   const BottomBar = () => (
     <View
       style={{
-        backgroundColor: '#0f172a',
+        backgroundColor: '#1e1b4b',
         borderTopWidth: 1,
-        borderTopColor: '#1e293b',
+        borderTopColor: '#1e1b4b',
         paddingHorizontal: 12,
         paddingTop: 10,
         paddingBottom: Platform.OS === 'ios' ? 24 : 12,
@@ -617,7 +638,7 @@ export default function SellScreen() {
       {/* Client identifier input */}
       <TextInput
         style={{
-          backgroundColor: '#1e293b',
+          backgroundColor: '#1e1b4b',
           borderRadius: 10,
           paddingHorizontal: 12,
           paddingVertical: 8,
@@ -646,7 +667,7 @@ export default function SellScreen() {
         >
           <View
             style={{
-              backgroundColor: cartCount > 0 ? '#e94560' : '#334155',
+              backgroundColor: cartCount > 0 ? '#4338CA' : '#334155',
               borderRadius: 14,
               paddingHorizontal: 10,
               paddingVertical: 4,
@@ -674,7 +695,7 @@ export default function SellScreen() {
           onPress={handleSendOrder}
           disabled={sending || cartCount === 0}
           style={{
-            backgroundColor: sending || cartCount === 0 ? '#334155' : '#e94560',
+            backgroundColor: sending || cartCount === 0 ? '#334155' : '#4338CA',
             borderRadius: 12,
             paddingVertical: 12,
             paddingHorizontal: 20,
@@ -702,9 +723,9 @@ export default function SellScreen() {
     <View
       style={{
         width: 300,
-        backgroundColor: '#0f172a',
+        backgroundColor: '#1e1b4b',
         borderLeftWidth: 1,
-        borderLeftColor: '#1e293b',
+        borderLeftColor: '#1e1b4b',
       }}
     >
       {/* Identifier */}
@@ -712,7 +733,7 @@ export default function SellScreen() {
         style={{
           padding: 12,
           borderBottomWidth: 1,
-          borderBottomColor: '#1e293b',
+          borderBottomColor: '#1e1b4b',
         }}
       >
         <Text
@@ -729,7 +750,7 @@ export default function SellScreen() {
         </Text>
         <TextInput
           style={{
-            backgroundColor: '#1e293b',
+            backgroundColor: '#1e1b4b',
             borderRadius: 10,
             paddingHorizontal: 12,
             paddingVertical: 8,
@@ -761,7 +782,7 @@ export default function SellScreen() {
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
-                backgroundColor: '#1e293b',
+                backgroundColor: '#1e1b4b',
                 borderRadius: 10,
                 padding: 10,
                 marginBottom: 6,
@@ -819,7 +840,7 @@ export default function SellScreen() {
               </View>
               <Text
                 style={{
-                  color: '#e94560',
+                  color: '#4338CA',
                   fontSize: 13,
                   fontWeight: '700',
                   minWidth: 58,
@@ -828,6 +849,13 @@ export default function SellScreen() {
               >
                 {formatKES(ci.product.price * ci.qty)}
               </Text>
+              <TouchableOpacity
+                onPress={() => removeFromCart(ci.product.id)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={{ marginLeft: 8, padding: 4 }}
+              >
+                <Text style={{ color: '#475569', fontSize: 15 }}>✕</Text>
+              </TouchableOpacity>
             </View>
           ))
         )}
@@ -838,7 +866,7 @@ export default function SellScreen() {
         style={{
           padding: 12,
           borderTopWidth: 1,
-          borderTopColor: '#1e293b',
+          borderTopColor: '#1e1b4b',
         }}
       >
         {cart.length > 0 && (
@@ -863,7 +891,7 @@ export default function SellScreen() {
           onPress={handleSendOrder}
           disabled={sending || cartCount === 0}
           style={{
-            backgroundColor: sending || cartCount === 0 ? '#334155' : '#e94560',
+            backgroundColor: sending || cartCount === 0 ? '#334155' : '#4338CA',
             borderRadius: 14,
             paddingVertical: 14,
             alignItems: 'center',
@@ -886,12 +914,11 @@ export default function SellScreen() {
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#0f172a' }}>
-      {/* Header — padded for Android status bar */}
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#1e1b4b' }}>
+      {/* Header */}
       <View
         style={{
-          paddingTop: STATUSBAR_HEIGHT,
-          backgroundColor: '#0f172a',
+          backgroundColor: '#1e1b4b',
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -907,7 +934,7 @@ export default function SellScreen() {
         <TouchableOpacity
           onPress={() => setCartDetailOpen(true)}
           style={{
-            backgroundColor: cartCount > 0 ? '#e94560' : '#1e293b',
+            backgroundColor: cartCount > 0 ? '#4338CA' : '#1e1b4b',
             borderRadius: 20,
             paddingHorizontal: 14,
             paddingVertical: 6,
@@ -932,7 +959,7 @@ export default function SellScreen() {
       ) : (
         <View style={{ flex: 1, flexDirection: 'column' }}>
           {ProductArea()}
-          {BottomBar()}
+          {cartCount > 0 && BottomBar()}
         </View>
       )}
 

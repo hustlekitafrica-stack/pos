@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { View, Text, ScrollView, SafeAreaView, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, router } from 'expo-router';
 import { database } from '@/lib/db';
 import { Customer, CreditTransaction } from '@/lib/db/models';

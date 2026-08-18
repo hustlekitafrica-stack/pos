@@ -1,7 +1,12 @@
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { formatKES, fromCents } from '@/utils/currency';
-import type { SalesReport, ExpenseReport, ShiftReport, DebtorEntry, LowStockItem } from './aggregate';
+import type {
+  SalesReport, ExpenseReport, ShiftReport, DebtorEntry, LowStockItem,
+  ProfitLossReport, ProductPerformanceReport, CategoryAnalysisReport,
+  PaymentAnalysisReport, StaffPerformanceReport, DiscountsVoidsReport,
+  StockMovementReport, HourlySalesReport,
+} from './aggregate';
 
 // ─── CSV Export ─────────────────────────────────────────────────────────────
 
@@ -211,3 +216,175 @@ async function sharePDF(html: string, filename: string): Promise<void> {
     }
   }
 }
+
+// ─── New report CSV exports ──────────────────────────────────────────────────
+
+export async function exportProfitLossCSV(report: ProfitLossReport): Promise<void> {
+  const rows: string[] = [];
+  rows.push(toCsvRow(['Profit & Loss Statement', report.period]));
+  rows.push('');
+  rows.push(toCsvRow(['', 'Amount (KES)']));
+  rows.push(toCsvRow(['Gross Revenue', fromCents(report.grossRevenue)]));
+  rows.push(toCsvRow(['  Less: Discounts', fromCents(report.totalDiscounts)]));
+  rows.push(toCsvRow(['  Less: Refunds', fromCents(report.totalRefunds)]));
+  rows.push(toCsvRow(['  Less: Complimentary', fromCents(report.totalComplimentary)]));
+  rows.push(toCsvRow(['Net Revenue', fromCents(report.netRevenue)]));
+  rows.push(toCsvRow(['Cost of Goods Sold (COGS)', fromCents(report.cogs)]));
+  rows.push(toCsvRow([`Gross Profit (${report.grossMargin}% margin)`, fromCents(report.grossProfit)]));
+  rows.push('');
+  rows.push(toCsvRow(['Operating Expenses', '']));
+  for (const e of report.expenseLines) {
+    rows.push(toCsvRow([`  ${e.category} (${e.count} entries)`, fromCents(e.amount)]));
+  }
+  rows.push(toCsvRow(['Total Expenses', fromCents(report.totalExpenses)]));
+  rows.push('');
+  rows.push(toCsvRow([`Net Profit (${report.netMargin}% margin)`, fromCents(report.netProfit)]));
+  await shareCSV(rows.join('\n'), `profit-loss-${Date.now()}.csv`);
+}
+
+export async function exportProductPerformanceCSV(report: ProductPerformanceReport): Promise<void> {
+  const rows: string[] = [];
+  rows.push(toCsvRow(['Product Performance', report.period]));
+  rows.push('');
+  rows.push(toCsvRow(['Product', 'Category', 'Station', 'Qty Sold', 'Revenue (KES)', 'COGS (KES)', 'Gross Profit (KES)', 'Margin %', '% of Revenue']));
+  for (const p of report.products) {
+    rows.push(toCsvRow([p.name, p.category, p.station, p.qtySold, fromCents(p.revenue), fromCents(p.cogs), fromCents(p.grossProfit), `${p.margin}%`, `${p.pctOfRevenue}%`]));
+  }
+  rows.push('');
+  rows.push(toCsvRow(['TOTAL', '', '', '', fromCents(report.totalRevenue), fromCents(report.totalCogs), fromCents(report.totalGrossProfit), '']));
+  await shareCSV(rows.join('\n'), `product-performance-${Date.now()}.csv`);
+}
+
+export async function exportCategoryAnalysisCSV(report: CategoryAnalysisReport): Promise<void> {
+  const rows: string[] = [];
+  rows.push(toCsvRow(['Category Analysis', report.period]));
+  rows.push('');
+  rows.push(toCsvRow(['Category', 'Station', 'Revenue (KES)', 'Qty Sold', 'COGS (KES)', 'Gross Profit (KES)', 'Margin %', '% of Total']));
+  for (const c of report.categories) {
+    rows.push(toCsvRow([c.name, c.station, fromCents(c.revenue), c.qty, fromCents(c.cogs), fromCents(c.grossProfit), `${c.margin}%`, `${c.pctOfTotal}%`]));
+  }
+  await shareCSV(rows.join('\n'), `category-analysis-${Date.now()}.csv`);
+}
+
+export async function exportPaymentAnalysisCSV(report: PaymentAnalysisReport): Promise<void> {
+  const rows: string[] = [];
+  rows.push(toCsvRow(['Payment Analysis', report.period]));
+  rows.push(toCsvRow(['Total Collected', fromCents(report.totalCollected)]));
+  rows.push(toCsvRow(['Total Refunded', fromCents(report.totalRefunded)]));
+  rows.push(toCsvRow(['Net Received', fromCents(report.netReceived)]));
+  rows.push('');
+  rows.push(toCsvRow(['Method', 'Amount (KES)', 'Transactions', '% of Total', 'Refunded (KES)']));
+  for (const m of report.methods) {
+    rows.push(toCsvRow([m.method, fromCents(m.amount), m.count, `${m.pct}%`, fromCents(m.refunded)]));
+  }
+  rows.push('');
+  rows.push(toCsvRow(['Period', 'Revenue (KES)', 'Orders']));
+  for (const h of report.hourlyTotals) {
+    rows.push(toCsvRow([h.label, fromCents(h.revenue), h.orders]));
+  }
+  await shareCSV(rows.join('\n'), `payment-analysis-${Date.now()}.csv`);
+}
+
+export async function exportStaffPerformanceCSV(report: StaffPerformanceReport): Promise<void> {
+  const rows: string[] = [];
+  rows.push(toCsvRow(['Staff Performance', report.period]));
+  rows.push('');
+  rows.push(toCsvRow(['Staff', 'Role', 'Orders', 'Revenue (KES)', 'Avg Order (KES)', 'Discounts Given (KES)', 'Comps Given (KES)', 'Shifts']));
+  for (const s of report.staff) {
+    rows.push(toCsvRow([s.name, s.role, s.orders, fromCents(s.revenue), fromCents(s.avgOrder), fromCents(s.discountsGiven), fromCents(s.compsGiven), s.shifts]));
+  }
+  await shareCSV(rows.join('\n'), `staff-performance-${Date.now()}.csv`);
+}
+
+export async function exportDiscountsVoidsCSV(report: DiscountsVoidsReport): Promise<void> {
+  const rows: string[] = [];
+  rows.push(toCsvRow(['Discounts, Voids & Comps', report.period]));
+  rows.push('');
+  rows.push(toCsvRow(['DISCOUNTS', '']));
+  rows.push(toCsvRow(['Total Discount Value', fromCents(report.totalDiscountValue)]));
+  rows.push(toCsvRow(['Discounted Orders', report.discountedOrders]));
+  rows.push(toCsvRow(['Reason', 'Count', 'Amount (KES)']));
+  for (const r of report.discountReasons) rows.push(toCsvRow([r.reason, r.count, fromCents(r.amount)]));
+  rows.push('');
+  rows.push(toCsvRow(['VOIDS', '']));
+  rows.push(toCsvRow(['Total Void Value', fromCents(report.totalVoidValue)]));
+  rows.push(toCsvRow(['Voided Items', report.voidedItemCount]));
+  rows.push(toCsvRow(['Reason', 'Count', 'Value (KES)']));
+  for (const r of report.voidReasons) rows.push(toCsvRow([r.reason, r.count, fromCents(r.value)]));
+  rows.push('');
+  rows.push(toCsvRow(['COMPLIMENTARY', '']));
+  rows.push(toCsvRow(['Total Comp Value', fromCents(report.totalCompValue)]));
+  rows.push(toCsvRow(['Comp Items', report.compItemCount]));
+  rows.push(toCsvRow(['Reason', 'Count', 'Value (KES)']));
+  for (const r of report.compReasons) rows.push(toCsvRow([r.reason, r.count, fromCents(r.value)]));
+  await shareCSV(rows.join('\n'), `discounts-voids-${Date.now()}.csv`);
+}
+
+export async function exportStockMovementCSV(report: StockMovementReport): Promise<void> {
+  const rows: string[] = [];
+  rows.push(toCsvRow(['Stock Movement', report.period]));
+  rows.push('');
+  rows.push(toCsvRow(['Type', 'Count', 'Units']));
+  rows.push(toCsvRow(['Restocks', report.restocks.count, report.restocks.totalUnits]));
+  rows.push(toCsvRow(['Wastage', report.wastage.count, report.wastage.totalUnits]));
+  rows.push(toCsvRow(['Breakage', report.breakage.count, report.breakage.totalUnits]));
+  rows.push(toCsvRow(['Corrections', report.corrections.count, report.corrections.netUnits]));
+  rows.push('');
+  rows.push(toCsvRow(['Product', 'Reason', 'Change', 'By', 'Date']));
+  for (const m of report.movements) {
+    rows.push(toCsvRow([m.productName, m.reason, m.changeQty > 0 ? `+${m.changeQty}` : m.changeQty, m.adjustedBy, m.date]));
+  }
+  await shareCSV(rows.join('\n'), `stock-movement-${Date.now()}.csv`);
+}
+
+export async function exportHourlySalesCSV(report: HourlySalesReport): Promise<void> {
+  const rows: string[] = [];
+  rows.push(toCsvRow(['Hourly Sales', report.period]));
+  rows.push(toCsvRow(['Peak Period', report.peakLabel]));
+  rows.push('');
+  rows.push(toCsvRow([report.isHourly ? 'Hour' : 'Date', 'Revenue (KES)', 'Orders']));
+  for (const h of report.hourlyData) {
+    rows.push(toCsvRow([h.label, fromCents(h.revenue), h.orders]));
+  }
+  await shareCSV(rows.join('\n'), `hourly-sales-${Date.now()}.csv`);
+}
+
+export async function exportProfitLossPDF(report: ProfitLossReport): Promise<void> {
+  const fk = formatKES;
+  const row = (label: string, value: string, bold = false, color = '#1e293b') =>
+    `<tr><td style="padding:6px 8px;${bold ? 'font-weight:700;' : ''}">${label}</td><td style="padding:6px 8px;text-align:right;font-weight:700;color:${color}">${value}</td></tr>`;
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    body{font-family:Arial,sans-serif;padding:24px;font-size:12px;color:#1e293b}
+    h1{font-size:20px;margin-bottom:2px}
+    .sub{color:#64748b;font-size:11px;margin-bottom:20px}
+    table{width:100%;border-collapse:collapse;margin-bottom:16px}
+    th{background:#1e1b4b;color:#fff;padding:8px;text-align:left;font-size:11px}
+    tr:nth-child(even){background:#f8fafc}
+    .divider{border-top:2px solid #1e1b4b}
+    .profit{background:#f0fdf4} .loss{background:#fef2f2}
+  </style></head><body>
+  <h1>Profit & Loss Statement</h1>
+  <div class="sub">${report.period} &nbsp;|&nbsp; ${report.orderCount} orders</div>
+  <table>
+    <tr><th>Item</th><th style="text-align:right">Amount (KES)</th></tr>
+    ${row('Gross Revenue', fk(report.grossRevenue))}
+    ${row('  Less: Discounts', `(${fk(report.totalDiscounts)})`)}
+    ${row('  Less: Refunds', `(${fk(report.totalRefunds)})`)}
+    ${row('  Less: Complimentary', `(${fk(report.totalComplimentary)})`)}
+    ${row('Net Revenue', fk(report.netRevenue), true)}
+    <tr class="divider"></tr>
+    ${row('Cost of Goods Sold (COGS)', `(${fk(report.cogs)})`)}
+    ${row(`Gross Profit — ${report.grossMargin}% margin`, fk(report.grossProfit), true, report.grossProfit >= 0 ? '#16a34a' : '#dc2626')}
+    <tr class="divider"></tr>
+    <tr><th colspan="2">Operating Expenses</th></tr>
+    ${report.expenseLines.map((e) => row(`  ${e.category} (${e.count})`, `(${fk(e.amount)})`)).join('')}
+    ${row('Total Expenses', `(${fk(report.totalExpenses)})`, true, '#dc2626')}
+    <tr class="divider"></tr>
+    ${row(`Net Profit — ${report.netMargin}% margin`, fk(report.netProfit), true, report.netProfit >= 0 ? '#16a34a' : '#dc2626')}
+  </table>
+  </body></html>`;
+  await sharePDF(html, `profit-loss-${Date.now()}`);
+}
+
+
