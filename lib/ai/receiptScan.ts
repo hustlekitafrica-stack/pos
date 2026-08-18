@@ -1,5 +1,6 @@
 import { SUPABASE_CONFIG } from '@/constants/config';
-import { supabase } from '../supabase';
+import { supabase as _supabase } from '../supabase';
+const supabase = _supabase!;
 
 export interface ReceiptScanResult {
   vendorName: string | null;

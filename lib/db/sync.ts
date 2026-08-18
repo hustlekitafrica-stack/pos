@@ -1,6 +1,7 @@
 import { synchronize } from '@nozbe/watermelondb/sync';
 import { database } from './index';
-import { supabase } from '../supabase';
+import { supabase as _supabase } from '../supabase';
+const supabase = _supabase!;
 import { SUPABASE_CONFIG } from '@/constants/config';
 
 const SYNC_TABLES = [

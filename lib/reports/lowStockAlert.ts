@@ -1,4 +1,5 @@
-import { supabase } from '../supabase';
+import { supabase as _supabase } from '../supabase';
+const supabase = _supabase!;
 import { getLowStockItems } from './aggregate';
 import { database } from '../db';
 import { Product } from '../db/models';
