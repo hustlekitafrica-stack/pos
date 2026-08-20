@@ -30,11 +30,15 @@ const TS_COLUMNS = ['created_at', 'updated_at', 'opened_at', 'closed_at', 'paid_
 
 /**
  * Convert WatermelonDB raw records (number timestamps) → Supabase-ready format (ISO strings).
- * Also converts audit_log.details from a JSON string to an object (for jsonb storage).
+ * Also:
+ * - Strips WatermelonDB internal fields (_status, _changed) that PostgREST rejects
+ *   as unknown columns (PostgREST v12+ returns an error for unrecognised column names).
+ * - Converts audit_log.details from a JSON string to a parsed object (jsonb storage).
  */
 function toSupabase(records: any[]): any[] {
   return records.map((r) => {
-    const out = { ...r };
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { _status, _changed, ...out } = r as any;
     for (const col of TS_COLUMNS) {
       if (out[col] != null) {
         out[col] = new Date(out[col] as number).toISOString();
