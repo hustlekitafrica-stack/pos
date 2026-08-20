@@ -34,13 +34,13 @@ export default function RootLayout() {
     });
 
     // Sync on startup and whenever the app comes to foreground
-    syncDatabase().catch(() => {});
+    syncDatabase().catch((e) => console.warn('Background sync error:', e?.message ?? e));
 
     // Register activity on app state changes
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
       if (state === 'active') {
         registerActivity();
-        syncDatabase().catch(() => {});
+        syncDatabase().catch((e) => console.warn('Background sync error:', e?.message ?? e));
       }
     });
 

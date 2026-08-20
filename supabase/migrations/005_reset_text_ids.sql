@@ -209,7 +209,7 @@ CREATE TABLE expenses (
   category_id       text REFERENCES expense_categories(id),
   description       text NOT NULL,
   amount            integer NOT NULL DEFAULT 0,
-  paid_by           text REFERENCES staff(id),
+  paid_by           text,
   logged_by         text REFERENCES staff(id),
   date              date NOT NULL,
   receipt_photo_url text,
