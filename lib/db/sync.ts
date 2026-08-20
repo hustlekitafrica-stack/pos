@@ -4,11 +4,25 @@ import { supabase as _supabase } from '../supabase';
 const supabase = _supabase!;
 import { SUPABASE_CONFIG } from '@/constants/config';
 
+// Tables must be listed in FK-dependency order so that when data is pushed
+// to Supabase, parent rows always exist before child rows that reference them.
+//   staff / devices / categories / expense_categories / customers / restaurant_tables
+//     → products (needs categories)
+//     → shifts (needs staff)
+//     → orders (needs staff, devices, shifts, restaurant_tables, customers)
+//       → order_items (needs orders, products)
+//       → payments (needs orders)
+//         → refunds (needs payments)
+//       → credit_transactions (needs customers, orders)
+//     → stock_adjustments (needs products, staff)
+//     → expenses (needs expense_categories)
+//     → audit_log (needs staff, devices)
+//     → settings (no deps)
 const SYNC_TABLES = [
-  'staff', 'devices', 'categories', 'products', 'stock_adjustments',
-  'restaurant_tables', 'orders', 'order_items', 'payments', 'refunds',
-  'customers', 'credit_transactions', 'expense_categories', 'expenses',
-  'shifts', 'audit_log', 'settings',
+  'staff', 'devices', 'categories', 'expense_categories', 'customers',
+  'restaurant_tables', 'products', 'shifts', 'orders', 'order_items',
+  'payments', 'refunds', 'credit_transactions', 'stock_adjustments',
+  'expenses', 'audit_log', 'settings',
 ];
 
 // Timestamp columns that WatermelonDB stores as Unix ms but Supabase stores as timestamptz
