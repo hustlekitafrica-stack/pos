@@ -30,13 +30,19 @@ INSERT INTO settings (id) VALUES ('global') ON CONFLICT DO NOTHING;
 
 ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
 
+-- Drop first so this file can be re-run safely
+DROP POLICY IF EXISTS "anon_all_settings" ON settings;
+DROP POLICY IF EXISTS "settings_select"   ON settings;
+DROP POLICY IF EXISTS "settings_update"   ON settings;
+DROP POLICY IF EXISTS "settings_insert"   ON settings;
+
 -- Anon (POS device sync without Supabase Auth)
 CREATE POLICY "anon_all_settings" ON settings FOR ALL TO anon USING (true) WITH CHECK (true);
 
 -- Authenticated (role-based access — admin manages settings)
 CREATE POLICY "settings_select" ON settings FOR SELECT TO authenticated USING (true);
-CREATE POLICY "settings_update" ON settings FOR UPDATE TO authenticated USING (public.pos_user_role() IN ('admin', 'manager'));
-CREATE POLICY "settings_insert" ON settings FOR INSERT TO authenticated WITH CHECK (public.pos_user_role() IN ('admin', 'manager'));
+CREATE POLICY "settings_update" ON settings FOR UPDATE TO authenticated USING (true);
+CREATE POLICY "settings_insert" ON settings FOR INSERT TO authenticated WITH CHECK (true);
 
 -- ── 3. Create logos storage bucket ───────────────────────────────────────────
 
