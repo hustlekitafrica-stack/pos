@@ -2,25 +2,28 @@ import { useState, useCallback } from 'react';
 import {
   View,
   Text,
-  ScrollView,
-  TouchableOpacity,
-  Alert,
   TextInput,
-  Modal,
-  ActivityIndicator,
-  useWindowDimensions,
-  KeyboardAvoidingView,
+  TouchableOpacity,
+  ScrollView,
   Platform,
+  Alert,
+  ActivityIndicator,
+  Modal,
+  KeyboardAvoidingView,
+  useWindowDimensions,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
-import Constants from 'expo-constants';
+import { useDeviceStore } from '@/stores/deviceStore';
 import { useAuthStore } from '@/stores/authStore';
 import { formatKES } from '@/utils/currency';
 import { database } from '@/lib/db';
 import {
   getProductsByStation,
   getAllActiveProducts,
+  getAllCategories,
+  getProductsByCategory,
   getActiveOrderForTable,
   createOrder,
   addItemToOrder,
@@ -37,7 +40,7 @@ import { buildOrderSlip } from '@/lib/printer/templates';
 import { sendToPrinter } from '@/lib/printer/connection';
 import { Q } from '@nozbe/watermelondb';
 
-const DEVICE_ID = Constants.sessionId ?? Constants.expoConfig?.extra?.deviceId ?? 'device-unknown';
+
 
 
 interface CartItem {
@@ -48,7 +51,7 @@ interface CartItem {
 // ─── Station tabs ─────────────────────────────────────────────────────────────
 const STATIONS: { label: string; station: string }[] = [
   { label: 'Bar', station: 'bar' },
-  { label: 'Food', station: 'kitchen' },
+  { label: 'Kitchen', station: 'kitchen' },
 ];
 
 // ─── Table auto-create helper ─────────────────────────────────────────────────
@@ -73,6 +76,7 @@ export default function SellScreen() {
   const isTablet = width >= 700;
   const numCols = isTablet ? 3 : width >= 420 ? 3 : 2;
 
+  const deviceId = useDeviceStore((s) => s.deviceId) ?? 'device-unknown';
   const currentStaff = useAuthStore((s) => s.currentStaff);
   const currentShiftId = useAuthStore((s) => s.currentShiftId);
 
@@ -81,6 +85,10 @@ export default function SellScreen() {
   const [products, setProducts] = useState<Product[]>([]);
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [menuLoading, setMenuLoading] = useState(true);
+
+  // Categories for active station
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
 
   // Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -97,13 +105,18 @@ export default function SellScreen() {
 
   // ── Load products for the active station ─────────────────────────────────
 
-  const loadProducts = useCallback(async (station: string) => {
+  const loadProducts = useCallback(async (station: string, catId?: string | null) => {
     setMenuLoading(true);
     setSearchQuery('');
-    const [stationProds, all] = await Promise.all([
-      getProductsByStation(station),
+    const [allCats, all] = await Promise.all([
+      getAllCategories(),
       getAllActiveProducts(),
     ]);
+    const stationCats = allCats.filter((c) => c.prepStation === station);
+    setCategories(stationCats);
+    const stationProds = catId
+      ? await getProductsByCategory(catId)
+      : await getProductsByStation(station);
     setProducts(stationProds);
     setAllProducts(all);
     setMenuLoading(false);
@@ -117,7 +130,13 @@ export default function SellScreen() {
 
   const handleSelectStation = (station: string) => {
     setActiveStation(station);
-    loadProducts(station);
+    setSelectedCategoryId(null);
+    loadProducts(station, null);
+  };
+
+  const handleSelectCategory = (catId: string | null) => {
+    setSelectedCategoryId(catId);
+    loadProducts(activeStation, catId);
   };
 
   // ── Cart helpers ─────────────────────────────────────────────────────────
@@ -159,7 +178,6 @@ export default function SellScreen() {
   const cartCount = cart.reduce((s, c) => s + c.qty, 0);
 
   // Filtered products for display
-  // When searching, look across ALL stations so no item is missed
   const visibleProducts = searchQuery.trim()
     ? allProducts.filter((p) =>
         p.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
@@ -171,6 +189,10 @@ export default function SellScreen() {
   const handleSendOrder = async () => {
     if (cart.length === 0) {
       Alert.alert('Empty Cart', 'Add items before sending an order.');
+      return;
+    }
+    if (!clientIdentifier.trim()) {
+      Alert.alert('Customer Required', 'Please enter a table, room, or customer name before sending the order.');
       return;
     }
     if (!currentShiftId) {
@@ -192,7 +214,7 @@ export default function SellScreen() {
         tableId: table.id,
         staffId: currentStaff!.id,
         shiftId: currentShiftId,
-        deviceId: DEVICE_ID,
+        deviceId,
         roomNumber: identifier !== 'Counter' ? identifier : undefined,
       });
 
@@ -323,6 +345,49 @@ export default function SellScreen() {
           );
         })}
       </View>
+
+      {/* Category pills */}
+      {categories.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ backgroundColor: '#f8fafc', borderBottomWidth: 1, borderBottomColor: '#e2e8f0', maxHeight: 48 }}
+          contentContainerStyle={{ paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center' }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <TouchableOpacity
+            onPress={() => handleSelectCategory(null)}
+            style={{
+              paddingHorizontal: 14,
+              paddingVertical: 6,
+              borderRadius: 20,
+              backgroundColor: selectedCategoryId === null ? '#4338CA' : '#e2e8f0',
+              marginRight: 8,
+            }}
+          >
+            <Text style={{ fontSize: 12, fontWeight: '700', color: selectedCategoryId === null ? '#fff' : '#64748b' }}>
+              All
+            </Text>
+          </TouchableOpacity>
+          {categories.map((cat) => (
+            <TouchableOpacity
+              key={cat.id}
+              onPress={() => handleSelectCategory(cat.id)}
+              style={{
+                paddingHorizontal: 14,
+                paddingVertical: 6,
+                borderRadius: 20,
+                backgroundColor: selectedCategoryId === cat.id ? '#4338CA' : '#e2e8f0',
+                marginRight: 8,
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '700', color: selectedCategoryId === cat.id ? '#fff' : '#64748b' }}>
+                {cat.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
 
       {/* Search */}
       <View
@@ -635,21 +700,27 @@ export default function SellScreen() {
         paddingBottom: Platform.OS === 'ios' ? 24 : 12,
       }}
     >
-      {/* Client identifier input */}
+      {/* Client identifier input — mandatory */}
+      <Text style={{ color: clientIdentifier.trim() ? '#94a3b8' : '#fca5a5', fontSize: 11, fontWeight: '600', marginBottom: 4 }}>
+        TABLE / ROOM / CUSTOMER NAME {clientIdentifier.trim() ? '' : '(required)'}
+      </Text>
       <TextInput
         style={{
-          backgroundColor: '#1e1b4b',
+          backgroundColor: '#fff',
           borderRadius: 10,
           paddingHorizontal: 12,
-          paddingVertical: 8,
-          color: '#e2e8f0',
+          paddingVertical: 9,
+          color: '#1e1b4b',
           fontSize: 14,
           marginBottom: 10,
+          borderWidth: 2,
+          borderColor: clientIdentifier.trim() ? '#4338CA' : '#ef4444',
+          fontWeight: '600',
         }}
         value={clientIdentifier}
         onChangeText={setClientIdentifier}
-        placeholder="Customer / Table / Room (e.g. Table 3, Room 205, John)"
-        placeholderTextColor="#475569"
+        placeholder="e.g. Table 3, Room 205, John"
+        placeholderTextColor="#94a3b8"
         returnKeyType="done"
       />
 
@@ -750,17 +821,20 @@ export default function SellScreen() {
         </Text>
         <TextInput
           style={{
-            backgroundColor: '#1e1b4b',
+            backgroundColor: '#fff',
             borderRadius: 10,
             paddingHorizontal: 12,
-            paddingVertical: 8,
-            color: '#e2e8f0',
+            paddingVertical: 9,
+            color: '#1e1b4b',
             fontSize: 14,
+            borderWidth: 2,
+            borderColor: clientIdentifier.trim() ? '#4338CA' : '#ef4444',
+            fontWeight: '600',
           }}
           value={clientIdentifier}
           onChangeText={setClientIdentifier}
           placeholder="Table 3, Room 205, John…"
-          placeholderTextColor="#475569"
+          placeholderTextColor="#94a3b8"
           returnKeyType="done"
         />
       </View>
@@ -926,8 +1000,8 @@ export default function SellScreen() {
           paddingBottom: 12,
         }}
       >
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={{ color: '#94a3b8', fontSize: 15 }}>← Home</Text>
+        <TouchableOpacity onPress={() => router.back()} style={{ padding: 6 }}>
+          <Feather name="arrow-left" size={22} color="#94a3b8" />
         </TouchableOpacity>
         <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700' }}>New Order</Text>
         {/* Cart badge (always visible) */}
@@ -959,7 +1033,7 @@ export default function SellScreen() {
       ) : (
         <View style={{ flex: 1, flexDirection: 'column' }}>
           {ProductArea()}
-          {cartCount > 0 && BottomBar()}
+          {cart.length > 0 && BottomBar()}
         </View>
       )}
 

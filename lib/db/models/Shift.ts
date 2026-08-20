@@ -16,6 +16,10 @@ export default class Shift extends Model {
   @field('closing_cash_expected') closingCashExpected!: number | null;
   @field('closing_cash_actual') closingCashActual!: number | null;
   @field('variance') variance!: number | null;
+  @text('status') status!: string;
+  @text('approved_by') approvedBy!: string | null;
+  @date('approved_at') approvedAt!: Date | null;
+  @text('closure_notes') closureNotes!: string | null;
   @relation('staff', 'staff_id') staffMember: any;
   @children('orders') orders: any;
   @readonly @date('created_at') createdAt!: Date;

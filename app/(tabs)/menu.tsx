@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { Feather } from '@expo/vector-icons';
 import { View, Text, ScrollView, TouchableOpacity, Modal, TextInput, Alert, Switch, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, router } from 'expo-router';
@@ -145,8 +146,8 @@ export default function MenuScreen() {
     <SafeAreaView className="flex-1 bg-surface">
       {/* Header */}
       <View className="flex-row items-center justify-between px-4 pt-3 pb-2">
-        <TouchableOpacity onPress={() => router.back()} className="w-16">
-          <Text className="text-primary text-lg">← Home</Text>
+        <TouchableOpacity onPress={() => router.back()} style={{ padding: 6 }}>
+          <Feather name="arrow-left" size={22} color="#4338CA" />
         </TouchableOpacity>
         <Text className="text-xl font-bold text-primary">Menu</Text>
         <View className="flex-row">
@@ -198,7 +199,10 @@ export default function MenuScreen() {
                 className="flex-row items-center mb-2"
                 activeOpacity={0.7}
               >
-                <Text className="text-sm font-bold text-gray-500 uppercase tracking-widest mr-2">
+                <Text
+                  className="text-sm font-bold text-gray-500 uppercase tracking-wide mr-2"
+                  numberOfLines={1}
+                >
                   {category.name}
                 </Text>
                 <View className="flex-1 h-px bg-gray-200" />

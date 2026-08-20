@@ -1,11 +1,15 @@
 import { useState, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, router } from 'expo-router';
 import { database } from '@/lib/db';
 import { Product, StockAdjustment, Category } from '@/lib/db/models';
 import { Q } from '@nozbe/watermelondb';
 import { useAuthStore } from '@/stores/authStore';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
 type AdjustReason = 'restock' | 'wastage' | 'breakage' | 'correction';
 
@@ -27,6 +31,7 @@ export default function StockScreen() {
   const [adjustQty, setAdjustQty] = useState('');
   const [adjustReason, setAdjustReason] = useState<AdjustReason>('restock');
   const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   const loadProducts = useCallback(async () => {
     setLoading(true);
@@ -114,6 +119,71 @@ export default function StockScreen() {
   const lowStockCount  = products.filter((p) => p.stockQty <= p.lowStockThreshold && p.stockQty > 0).length;
   const outOfStockCount = products.filter((p) => p.isOutOfStock || p.stockQty <= 0).length;
 
+  // ── CSV template download ────────────────────────────────────────────────
+  const handleDownloadTemplate = async () => {
+    const header = 'name,qty';
+    const rows = products.map((p) => `${p.name.replace(/,/g, '')},${p.stockQty}`);
+    const csv = [header, ...rows].join('\n');
+    const path = FileSystem.cacheDirectory + 'stock_template.csv';
+    await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
+    await Sharing.shareAsync(path, { mimeType: 'text/csv', dialogTitle: 'Stock Template' });
+  };
+
+  // ── CSV import ───────────────────────────────────────────────────────────
+  const handleImportCSV = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ['text/csv', 'text/comma-separated-values', 'text/plain', '*/*'],
+      copyToCacheDirectory: true,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    setImporting(true);
+    try {
+      const content = await FileSystem.readAsStringAsync(result.assets[0].uri, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+      const lines = content.split('\n').map((l) => l.trim()).filter(Boolean);
+      if (lines.length < 2) { Alert.alert('Error', 'CSV is empty or missing data rows.'); return; }
+      const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
+      const nameIdx = headers.indexOf('name');
+      const qtyIdx  = headers.indexOf('qty');
+      if (nameIdx === -1 || qtyIdx === -1) {
+        Alert.alert('Invalid CSV', 'CSV must have "name" and "qty" columns.');
+        return;
+      }
+      let updated = 0;
+      let skipped = 0;
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(',').map((c) => c.trim());
+        const name = cols[nameIdx]?.toLowerCase();
+        const qty  = parseInt(cols[qtyIdx] ?? '', 10);
+        if (!name || isNaN(qty)) { skipped++; continue; }
+        const allProds = await database.get<Product>('products').query().fetch();
+        const prod = allProds.find((p) => p.name.toLowerCase() === name);
+        if (!prod) { skipped++; continue; }
+        const oldQty = prod.stockQty;
+        await database.write(async () => {
+          await prod.update((p) => {
+            p.stockQty = qty;
+            if (qty > 0) p.isOutOfStock = false;
+          });
+          await database.get<StockAdjustment>('stock_adjustments').create((sa: any) => {
+            sa.productId   = prod.id;
+            sa.qty         = qty - oldQty;
+            sa.reason      = 'restock';
+            sa.performedBy = currentStaff?.id ?? '';
+          });
+        });
+        updated++;
+      }
+      Alert.alert('Import Complete', `Updated: ${updated}  ·  Skipped: ${skipped}`);
+      await loadProducts();
+    } catch (e: any) {
+      Alert.alert('Import Error', e?.message ?? 'Could not read file');
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const title = canSeeBar && canSeeKitchen
     ? 'Inventory'
     : canSeeBar
@@ -125,10 +195,30 @@ export default function StockScreen() {
       {/* Header */}
       <View className="px-4 pt-3 pb-1">
         <View className="flex-row items-center mb-1">
-          <TouchableOpacity onPress={() => router.back()} className="mr-4">
-            <Text className="text-primary text-lg">← Home</Text>
+          <TouchableOpacity onPress={() => router.back()} style={{ padding: 6, marginRight: 8 }}>
+            <Feather name="arrow-left" size={22} color="#4338CA" />
           </TouchableOpacity>
-          <Text className="text-xl font-bold text-primary">{title}</Text>
+          <Text className="text-xl font-bold text-primary flex-1">{title}</Text>
+          <TouchableOpacity
+            onPress={handleDownloadTemplate}
+            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6, marginRight: 8 }}
+          >
+            <Feather name="download" size={14} color="#4338CA" style={{ marginRight: 4 }} />
+            <Text style={{ color: '#4338CA', fontSize: 12, fontWeight: '700' }}>Template</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleImportCSV}
+            disabled={importing}
+            style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#4338CA', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 }}
+          >
+            {importing
+              ? <ActivityIndicator size="small" color="#fff" />
+              : <>
+                  <Feather name="upload" size={14} color="#fff" style={{ marginRight: 4 }} />
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Import CSV</Text>
+                </>
+            }
+          </TouchableOpacity>
         </View>
 
         {/* Bar / Kitchen toggle — only for admin & manager */}

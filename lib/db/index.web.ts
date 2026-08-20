@@ -18,6 +18,7 @@ import {
   Expense,
   Shift,
   AuditLog,
+  Settings,
 } from './models';
 
 // Web build: LokiJS adapter persists to IndexedDB in the browser
@@ -49,5 +50,6 @@ export const database = new Database({
     Expense,
     Shift,
     AuditLog,
+    Settings,
   ],
 });

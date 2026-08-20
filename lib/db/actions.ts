@@ -443,6 +443,7 @@ export async function openShift(staffId: string, openingCash: number): Promise<S
       s.staffId = staffId;
       s.openedAt = new Date();
       s.openingCash = openingCash;
+      s.status = 'open';
     });
   });
 }
@@ -495,8 +496,87 @@ export async function closeShift(shiftId: string, closingCashActual: number): Pr
       s.closingCashExpected = expectedCash;
       s.closingCashActual = closingCashActual;
       s.variance = closingCashActual - expectedCash;
+      s.status = 'closed';
     });
   });
+}
+
+export async function getShiftSummary(shiftId: string): Promise<{
+  cashTotal: number; mpesaTotal: number; cardTotal: number; creditTotal: number;
+  totalRevenue: number; orderCount: number; openOrders: Order[];
+}> {
+  const shiftOrders = await database.get<Order>('orders').query(Q.where('shift_id', shiftId)).fetch();
+  const openOrders = shiftOrders.filter((o) => !['paid', 'closed', 'voided'].includes(o.status));
+  const paidOrders = shiftOrders.filter((o) => ['paid', 'closed'].includes(o.status));
+  const orderIds = paidOrders.map((o) => o.id);
+  let cashTotal = 0; let mpesaTotal = 0; let cardTotal = 0; let creditTotal = 0;
+  if (orderIds.length > 0) {
+    const payments = await database.get<Payment>('payments').query(Q.where('order_id', Q.oneOf(orderIds))).fetch();
+    for (const p of payments) {
+      if (p.method === 'cash') cashTotal += p.amount;
+      else if (p.method === 'mpesa') mpesaTotal += p.amount;
+      else if (p.method === 'card') cardTotal += p.amount;
+      else if (p.method === 'credit') creditTotal += p.amount;
+    }
+  }
+  return {
+    cashTotal, mpesaTotal, cardTotal, creditTotal,
+    totalRevenue: cashTotal + mpesaTotal + cardTotal + creditTotal,
+    orderCount: paidOrders.length,
+    openOrders,
+  };
+}
+
+export async function requestShiftClosure(shiftId: string): Promise<void> {
+  const openOrders = await database.get<Order>('orders')
+    .query(Q.where('shift_id', shiftId), Q.where('status', Q.notIn(['paid', 'closed', 'voided'])))
+    .fetch();
+  if (openOrders.length > 0) {
+    throw new Error(`You have ${openOrders.length} open/unpaid order(s). Close all bills before ending your shift.`);
+  }
+  await database.write(async () => {
+    const shift = await database.get<Shift>('shifts').find(shiftId);
+    await shift.update((s) => { s.status = 'pending_approval'; });
+  });
+}
+
+export async function approveShiftClosure(
+  shiftId: string,
+  approverId: string,
+  closingCashActual: number,
+  notes?: string
+): Promise<void> {
+  await database.write(async () => {
+    const shiftOrders = await database.get<Order>('orders').query(Q.where('shift_id', shiftId)).fetch();
+    const orderIds = shiftOrders.map((o) => o.id);
+    let cashTotal = 0;
+    if (orderIds.length > 0) {
+      const payments = await database.get<Payment>('payments')
+        .query(Q.where('order_id', Q.oneOf(orderIds)), Q.where('method', 'cash'))
+        .fetch();
+      cashTotal = payments.reduce((sum, p) => sum + p.amount, 0);
+    }
+    const shift = await database.get<Shift>('shifts').find(shiftId);
+    const expectedCash = shift.openingCash + cashTotal;
+    await shift.update((s) => {
+      s.closedAt = new Date();
+      s.closingCashExpected = expectedCash;
+      s.closingCashActual = closingCashActual;
+      s.variance = closingCashActual - expectedCash;
+      s.status = 'closed';
+      s.approvedBy = approverId;
+      s.approvedAt = new Date();
+      s.closureNotes = notes ?? null;
+    });
+  });
+}
+
+export async function getPendingShifts(): Promise<Array<{ shift: Shift; staffName: string }>> {
+  const shifts = await database.get<Shift>('shifts').query(Q.where('status', 'pending_approval')).fetch();
+  const staffList = await database.get<Staff>('staff').query().fetch();
+  const nameMap: Record<string, string> = {};
+  for (const s of staffList) nameMap[s.id] = s.name;
+  return shifts.map((shift) => ({ shift, staffName: nameMap[shift.staffId] ?? 'Unknown' }));
 }
 
 // ─── Audit Log ──────────────────────────────────────────────────────────────

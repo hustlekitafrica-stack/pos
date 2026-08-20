@@ -2,17 +2,16 @@ import { useState, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, TextInput, Modal, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
-import Constants from 'expo-constants';
+import { useDeviceStore } from '@/stores/deviceStore';
 import { useAuthStore } from '@/stores/authStore';
 import { getAllTables, createOrder, getActiveOrderForTable, createTable } from '@/lib/db/actions';
 import { RestaurantTable } from '@/lib/db/models';
-
-const DEVICE_ID = Constants.sessionId ?? Constants.expoConfig?.extra?.deviceId ?? 'device-unknown';
 
 export default function TablesScreen() {
   const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [showAddTable, setShowAddTable] = useState(false);
   const [newTableName, setNewTableName] = useState('');
+  const deviceId = useDeviceStore((s) => s.deviceId) ?? 'device-unknown';
   const currentStaff = useAuthStore((s) => s.currentStaff);
   const currentShiftId = useAuthStore((s) => s.currentShiftId);
   const can = useAuthStore((s) => s.can);
@@ -45,7 +44,7 @@ export default function TablesScreen() {
           tableId: table.id,
           staffId: currentStaff!.id,
           shiftId: currentShiftId,
-          deviceId: DEVICE_ID,
+          deviceId,
         });
         await loadTables();
         router.push(`/order/${order.id}`);

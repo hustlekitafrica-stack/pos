@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, useWindowDimensions, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, useWindowDimensions, Alert, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useAuthStore } from '@/stores/authStore';
+import { useSettingsStore } from '@/stores/settingsStore';
+import { getPendingShifts } from '@/lib/db/actions';
 
 interface Tile {
   id: string;
@@ -99,14 +101,6 @@ const TILES: Tile[] = [
   },
 ];
 
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function formatDate(date: Date): string {
-  return date.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
-}
-
 export default function DashboardScreen() {
   const { width } = useWindowDimensions();
   const numCols = width >= 768 ? 4 : width >= 480 ? 3 : 2;
@@ -117,12 +111,17 @@ export default function DashboardScreen() {
   const can = useAuthStore((s) => s.can);
   const logout = useAuthStore((s) => s.logout);
 
-  const [now, setNow] = useState(new Date());
+  const logoUri = useSettingsStore((s) => s.logoUri);
+  const loadSettings = useSettingsStore((s) => s.loadSettings);
+  const [pendingCount, setPendingCount] = useState(0);
 
-  useEffect(() => {
-    const tick = setInterval(() => setNow(new Date()), 30000);
-    return () => clearInterval(tick);
-  }, []);
+  useEffect(() => { loadSettings(); }, []);
+
+  useFocusEffect(useCallback(() => {
+    if (can('approveShiftClosure')) {
+      getPendingShifts().then((list) => setPendingCount(list.length)).catch(() => {});
+    }
+  }, [can]));
 
   const handleTilePress = useCallback(
     (tile: Tile) => {
@@ -146,50 +145,54 @@ export default function DashboardScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-[#1e1b4b]">
-      {/* Header */}
-      <View className="px-5 pt-4 pb-3 flex-row items-start justify-between">
-        <View className="flex-1">
-          <Text className="text-white text-2xl font-bold">Bar POS</Text>
+      {/* Header — compact */}
+      <View className="px-4 pt-3 pb-2 flex-row items-center justify-between">
+        {/* Logo or app name */}
+        <View className="flex-row items-center flex-1">
+          {logoUri ? (
+            <Image source={{ uri: logoUri }} style={{ width: 40, height: 40, borderRadius: 8, marginRight: 10 }} resizeMode="contain" />
+          ) : (
+            <Text className="text-white text-xl font-bold mr-2">Bar POS</Text>
+          )}
           {currentStaff && (
-            <Text className="text-slate-400 text-sm mt-0.5">
-              {currentStaff.name} · {roleLabel}
-            </Text>
+            <View>
+              <Text className="text-white text-sm font-semibold">{currentStaff.name}</Text>
+              <Text className="text-slate-400 text-xs">{roleLabel}</Text>
+            </View>
           )}
         </View>
-        <View className="items-end">
-          <Text className="text-white text-xl font-semibold tabular-nums">{formatTime(now)}</Text>
-          <Text className="text-slate-400 text-xs mt-0.5">{formatDate(now)}</Text>
-          {/* Shift indicator */}
-          <View className="flex-row items-center mt-1.5">
-            <View
-              className={`w-2 h-2 rounded-full mr-1.5 ${
-                currentShiftId ? 'bg-green-400' : 'bg-gray-500'
-              }`}
-            />
-            <Text className="text-slate-400 text-xs">
-              {currentShiftId ? 'Shift open' : 'No shift'}
-            </Text>
+
+        {/* Right side: shift indicator + open shift + sign-out icon */}
+        <View className="flex-row items-center">
+          <View className="flex-row items-center mr-3">
+            <View className={`w-2 h-2 rounded-full mr-1.5 ${currentShiftId ? 'bg-green-400' : 'bg-gray-500'}`} />
+            <Text className="text-slate-400 text-xs">{currentShiftId ? 'Shift open' : 'No shift'}</Text>
           </View>
-          {!currentShiftId ? (
+          {!currentShiftId && (
             <TouchableOpacity
-              className="bg-green-600 px-3 py-1 rounded-lg mt-1"
+              className="bg-green-600 px-2 py-1 rounded-lg mr-3"
               onPress={() => router.push('/shift/open')}
             >
               <Text className="text-white text-xs font-semibold">Open Shift</Text>
             </TouchableOpacity>
-          ) : (
+          )}
+          {can('approveShiftClosure') && pendingCount > 0 && (
             <TouchableOpacity
-              className="bg-red-700/70 px-3 py-1 rounded-lg mt-1"
-              onPress={() => router.push('/shift/close')}
+              onPress={() => router.push('/shift/pending' as any)}
+              style={{ marginRight: 12, position: 'relative' }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <Text className="text-white text-xs font-semibold">Close Shift</Text>
+              <Feather name="bell" size={20} color="#fbbf24" />
+              <View style={{ position: 'absolute', top: -5, right: -6, backgroundColor: '#dc2626', borderRadius: 8, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2 }}>
+                <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>{pendingCount}</Text>
+              </View>
             </TouchableOpacity>
           )}
+          <TouchableOpacity onPress={logout} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Feather name="log-out" size={20} color="#94a3b8" />
+          </TouchableOpacity>
         </View>
       </View>
-
-      {/* Divider */}
-      <View className="h-px bg-slate-700 mx-5 mb-4" />
 
       {/* Tile Grid */}
       <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}>
@@ -253,13 +256,6 @@ export default function DashboardScreen() {
         </View>
       </ScrollView>
 
-      {/* Sign Out */}
-      <TouchableOpacity
-        className="mb-5 items-center py-2"
-        onPress={logout}
-      >
-        <Text className="text-slate-500 text-sm">Sign Out</Text>
-      </TouchableOpacity>
     </SafeAreaView>
   );
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Alert, Modal, TextInput, useWindowDimensions } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
 import { formatKES, toCents } from '@/utils/currency';
@@ -224,6 +225,7 @@ export default function OrderScreen() {
       amount: order.totalAmount,
     });
     setShowPayment(false);
+    handlePrintReceipt().catch(() => {});
     Alert.alert('Payment Recorded', 'Cash payment successful');
     router.back();
   };
@@ -284,6 +286,7 @@ export default function OrderScreen() {
       amount: order.totalAmount,
     });
     setShowPayment(false);
+    handlePrintReceipt().catch(() => {});
     Alert.alert('Payment Recorded', 'Card payment recorded');
     router.back();
   };
@@ -366,6 +369,29 @@ export default function OrderScreen() {
     setShowPayment(false);
     Alert.alert('Split Payment', 'Payments recorded');
     router.back();
+  };
+
+  const handlePrintReceipt = async () => {
+    if (!order) return;
+    try {
+      const lines = [
+        '================================',
+        `  ${tableName}`,
+        clientId ? `  ${clientId}` : '',
+        '================================',
+        ...activeItems.map((item) =>
+          `${String(item.qty).padEnd(3)} ${(productNames[item.productId] || '').substring(0, 18).padEnd(18)} ${item.isComplimentary ? 'FREE' : formatKES(item.unitPrice * item.qty)}`
+        ),
+        '--------------------------------',
+        `TOTAL: ${formatKES(order.totalAmount)}`,
+        '================================',
+        '',
+      ].filter((l) => l !== null).join('\n');
+      await sendToPrinter('bar', new TextEncoder().encode(lines));
+      Alert.alert('Sent', 'Receipt sent to bar printer');
+    } catch {
+      Alert.alert('Error', 'Could not reach bar printer');
+    }
   };
 
   const openCreditPicker = async () => {
@@ -619,7 +645,7 @@ export default function OrderScreen() {
             className="flex-1 bg-primary p-3 rounded-xl items-center mr-2 mb-2"
             onPress={openMenuModal}
           >
-            <Text className="text-white font-bold">Add Items</Text>
+            <Feather name="plus" size={20} color="#fff" />
           </TouchableOpacity>
 
 
@@ -629,7 +655,7 @@ export default function OrderScreen() {
               className="bg-red-700 p-3 rounded-xl items-center mr-2 mb-2 px-4"
               onPress={() => setShowRefund(true)}
             >
-              <Text className="text-white font-bold text-xs">Refund</Text>
+              <Feather name="rotate-ccw" size={20} color="#fff" />
             </TouchableOpacity>
           )}
 
@@ -638,7 +664,7 @@ export default function OrderScreen() {
               className="bg-indigo-500 p-3 rounded-xl items-center mr-2 mb-2 px-4"
               onPress={openSplitBill}
             >
-              <Text className="text-white font-bold text-xs">Split Bill</Text>
+              <Feather name="scissors" size={20} color="#fff" />
             </TouchableOpacity>
           )}
 
@@ -647,7 +673,7 @@ export default function OrderScreen() {
               className="bg-teal-600 p-3 rounded-xl items-center mr-2 mb-2 px-4"
               onPress={openMergeBills}
             >
-              <Text className="text-white font-bold text-xs">Merge</Text>
+              <Feather name="git-merge" size={20} color="#fff" />
             </TouchableOpacity>
           )}
 
@@ -656,19 +682,34 @@ export default function OrderScreen() {
               className="flex-1 bg-yellow-500 p-3 rounded-xl items-center mr-2"
               onPress={handleSendOrder}
             >
-              <Text className="text-white font-bold">
-                Send Order{pendingCount > 0 ? ` (${pendingCount})` : ''}
-              </Text>
+              <View style={{ position: 'relative', alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="send" size={20} color="#fff" />
+                {pendingCount > 0 && (
+                  <View style={{ position: 'absolute', top: -8, right: -12, backgroundColor: '#dc2626', borderRadius: 8, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2 }}>
+                    <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>{pendingCount}</Text>
+                  </View>
+                )}
+              </View>
             </TouchableOpacity>
           )}
 
+
+          {/* Print Receipt — available anytime there are items */}
+          {activeItems.length > 0 && (
+            <TouchableOpacity
+              className="bg-indigo-500 p-3 rounded-xl items-center mr-2 mb-2 px-4"
+              onPress={handlePrintReceipt}
+            >
+              <Feather name="printer" size={20} color="#fff" />
+            </TouchableOpacity>
+          )}
 
           {['sent', 'served', 'awaiting_payment'].includes(order.status) && order.totalAmount > 0 && (
             <TouchableOpacity
               className="flex-1 bg-accent p-3 rounded-xl items-center mb-2"
               onPress={() => setShowPayment(true)}
             >
-              <Text className="text-white font-bold">Collect Payment</Text>
+              <Feather name="check-circle" size={22} color="#fff" />
             </TouchableOpacity>
           )}
         </View>

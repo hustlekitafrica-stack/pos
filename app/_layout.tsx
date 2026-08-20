@@ -3,12 +3,16 @@ import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AppState, AppStateStatus, Alert } from 'react-native';
 import { useAuthStore } from '@/stores/authStore';
+import { useDeviceStore } from '@/stores/deviceStore';
 import { startSessionMonitor, stopSessionMonitor, registerActivity } from '@/lib/auth/session';
+import { syncDatabase } from '@/lib/db/sync';
+import { registerOrGetDevice } from '@/lib/auth/device';
 import '../global.css';
 
 export default function RootLayout() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const logout = useAuthStore((s) => s.logout);
+  const setDeviceId = useDeviceStore((s) => s.setDeviceId);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -20,14 +24,24 @@ export default function RootLayout() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
+    // Register this device (creates a `devices` row if needed) so that orders
+    // and audit_log records satisfy the Supabase FK constraint.
+    registerOrGetDevice().then(setDeviceId).catch(() => {});
+
     startSessionMonitor(() => {
       Alert.alert('Session Expired', 'You have been logged out due to inactivity.');
       logout();
     });
 
+    // Sync on startup and whenever the app comes to foreground
+    syncDatabase().catch(() => {});
+
     // Register activity on app state changes
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
-      if (state === 'active') registerActivity();
+      if (state === 'active') {
+        registerActivity();
+        syncDatabase().catch(() => {});
+      }
     });
 
     return () => {

@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 1,
+  version: 3,
   tables: [
     tableSchema({
       name: 'staff',
@@ -196,6 +196,10 @@ export const schema = appSchema({
         { name: 'closing_cash_expected', type: 'number', isOptional: true },
         { name: 'closing_cash_actual', type: 'number', isOptional: true },
         { name: 'variance', type: 'number', isOptional: true },
+        { name: 'status', type: 'string' },
+        { name: 'approved_by', type: 'string', isOptional: true },
+        { name: 'approved_at', type: 'number', isOptional: true },
+        { name: 'closure_notes', type: 'string', isOptional: true },
         { name: 'created_at', type: 'number' },
         { name: 'updated_at', type: 'number' },
       ],
@@ -209,6 +213,18 @@ export const schema = appSchema({
         { name: 'staff_id', type: 'string' },
         { name: 'device_id', type: 'string' },
         { name: 'details', type: 'string' },
+        { name: 'created_at', type: 'number' },
+        { name: 'updated_at', type: 'number' },
+      ],
+    }),
+    tableSchema({
+      name: 'settings',
+      columns: [
+        { name: 'alert_email', type: 'string' },
+        { name: 'logo_url', type: 'string', isOptional: true },
+        { name: 'bar_printer_address', type: 'string', isOptional: true },
+        { name: 'kitchen_printer_address', type: 'string', isOptional: true },
+        { name: 'venue_name', type: 'string' },
         { name: 'created_at', type: 'number' },
         { name: 'updated_at', type: 'number' },
       ],

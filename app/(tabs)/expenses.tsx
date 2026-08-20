@@ -1,11 +1,12 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Modal, TextInput,
-  Alert, ActivityIndicator, Animated,
+  Alert, ActivityIndicator, RefreshControl,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect, router } from 'expo-router';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { database } from '@/lib/db';
 import { Expense, ExpenseCategory } from '@/lib/db/models';
 import { Q } from '@nozbe/watermelondb';
@@ -15,17 +16,36 @@ import { captureReceiptImage, scanReceipt } from '@/lib/ai/receiptScan';
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
-const INDIGO   = '#4338CA';
-const INDIGO_L = '#6366f1';
-const INDIGO_D = '#1e1b4b';
-const BG       = '#f0f2ff';
+const BG        = '#F0F2FF';
+const INDIGO    = '#4338CA';
+const INDIGO_D  = '#1E1B4B';
+const LAVENDER  = '#EDE9FE';
+const MINT_BG   = '#DCFCE7';
+const MINT      = '#16A34A';
+const COACH_BG  = '#EAEBFF';
+const MUTED     = '#94A3B8';
+const ICON_OFF  = '#4B5563';
+const LABEL_OFF = '#6B7280';
 
 const MONTH_NAMES = [
   'January','February','March','April','May','June',
   'July','August','September','October','November','December',
 ];
 
+type ActiveTab = 'home' | 'receipts' | 'analytics' | 'assistant';
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
+
+function getGreeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function formatKsh(cents: number): string {
+  return `Ksh ${Math.round(cents / 100).toLocaleString('en-KE')}`;
+}
 
 function addMonths(date: Date, n: number): Date {
   const d = new Date(date);
@@ -40,21 +60,43 @@ function monthKey(date: Date): string {
 
 function daysElapsed(date: Date): number {
   const now = new Date();
-  const isCurrentMonth =
+  const isCurrent =
     now.getFullYear() === date.getFullYear() && now.getMonth() === date.getMonth();
-  return isCurrentMonth ? now.getDate() : new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  return isCurrent ? now.getDate() : new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
+
+// ─── TabItem ──────────────────────────────────────────────────────────────────
+
+function TabItem({
+  icon, label, active, onPress,
+}: { icon: string; label: string; active: boolean; onPress: () => void }) {
+  return (
+    <TouchableOpacity onPress={onPress} style={{ flex: 1, alignItems: 'center', paddingTop: 8, paddingBottom: 4 }}>
+      <Feather name={icon as any} size={24} color={active ? INDIGO : ICON_OFF} />
+      <Text style={{ fontSize: 11, marginTop: 4, color: active ? INDIGO : LABEL_OFF, fontWeight: active ? '700' : '500' }}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
 }
 
 // ─── component ───────────────────────────────────────────────────────────────
 
 export default function ExpensesScreen() {
+  const insets = useSafeAreaInsets();
   const [allExpenses, setAllExpenses]     = useState<Expense[]>([]);
   const [categories, setCategories]       = useState<ExpenseCategory[]>([]);
   const [catNames, setCatNames]           = useState<Record<string, string>>({});
   const [viewMonth, setViewMonth]         = useState(new Date());
   const [loading, setLoading]             = useState(false);
+  const [refreshing, setRefreshing]       = useState(false);
+  const [activeTab, setActiveTab]         = useState<ActiveTab>('home');
+  const [assistantSubTab, setAssistantSubTab] = useState<'ai' | 'search'>('ai');
+  const [chatInput, setChatInput]         = useState('');
+  const [chatMessages, setChatMessages]   = useState<Array<{ role: 'user' | 'bot'; text: string }>>([]);
+  const [searchQuery, setSearchQuery]     = useState('');
 
-  // Add expense form state
+  // Add expense form
   const [showAdd, setShowAdd]             = useState(false);
   const [selectedCatId, setSelectedCatId] = useState('');
   const [description, setDescription]     = useState('');
@@ -65,25 +107,13 @@ export default function ExpensesScreen() {
 
   const currentStaff = useAuthStore((s) => s.currentStaff);
 
-  // ── pulse animation ──────────────────────────────────────────────────────
-
-  const pulse = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1.35, duration: 900, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 1,    duration: 900, useNativeDriver: true }),
-      ])
-    ).start();
-  }, []);
-
-  // ── data loading ─────────────────────────────────────────────────────────
+  // ── data loading ──────────────────────────────────────────────────────────
 
   const loadData = useCallback(async () => {
     setLoading(true);
     const data = await database
       .get<Expense>('expenses')
-      .query(Q.sortBy('created_at', Q.desc), Q.take(200))
+      .query(Q.sortBy('created_at', Q.desc), Q.take(500))
       .fetch();
     setAllExpenses(data);
 
@@ -98,36 +128,35 @@ export default function ExpensesScreen() {
 
   useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
-  // ── filtered expenses for selected month ─────────────────────────────────
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadData();
+    setRefreshing(false);
+  }, [loadData]);
 
-  const mk = monthKey(viewMonth);
+  // ── computed ──────────────────────────────────────────────────────────────
+
+  const mk            = monthKey(viewMonth);
   const monthExpenses = allExpenses.filter((e) => e.expenseDate?.startsWith(mk));
   const monthTotal    = monthExpenses.reduce((s, e) => s + e.amount, 0);
   const days          = daysElapsed(viewMonth);
   const avgPerDay     = days > 0 ? Math.round(monthTotal / days) : 0;
 
-  // Biggest category
+  const priorMk       = monthKey(addMonths(viewMonth, -1));
+  const priorTotal    = allExpenses.filter((e) => e.expenseDate?.startsWith(priorMk)).reduce((s, e) => s + e.amount, 0);
+
   const catTotals: Record<string, number> = {};
-  for (const e of monthExpenses) {
-    catTotals[e.categoryId] = (catTotals[e.categoryId] || 0) + e.amount;
-  }
-  const biggestCatId = Object.keys(catTotals).reduce(
-    (best, id) => (catTotals[id] > (catTotals[best] || 0) ? id : best),
-    ''
-  );
+  for (const e of monthExpenses) catTotals[e.categoryId] = (catTotals[e.categoryId] || 0) + e.amount;
+  const biggestCatId   = Object.keys(catTotals).reduce((b, id) => (catTotals[id] > (catTotals[b] || 0) ? id : b), '');
   const biggestCatName = biggestCatId ? (catNames[biggestCatId] || '—') : '—';
 
-  // ── add expense ───────────────────────────────────────────────────────────
+  const totalScanned   = allExpenses.filter((e) => e.source === 'scanned').length;
+  const scoreUnlocked  = totalScanned >= 5;
 
-  const resetForm = () => {
-    setDescription(''); setAmount(''); setPaidBy('');
-    setVendorName(''); setReceiptImageUrl(null);
-  };
+  // ── form helpers ──────────────────────────────────────────────────────────
 
-  const openAdd = () => {
-    resetForm();
-    setShowAdd(true);
-  };
+  const resetForm = () => { setDescription(''); setAmount(''); setPaidBy(''); setVendorName(''); setReceiptImageUrl(null); };
+  const openAdd   = () => { resetForm(); setShowAdd(true); };
 
   const handleAddExpense = async () => {
     if (!description.trim() || !amount.trim() || !selectedCatId) {
@@ -139,25 +168,22 @@ export default function ExpensesScreen() {
 
     await database.write(async () => {
       await database.get<Expense>('expenses').create((e) => {
-        e.categoryId     = selectedCatId;
-        e.description    = description.trim();
-        e.amount         = amountCents;
-        e.paidBy         = paidBy.trim() || currentStaff!.name;
-        e.loggedBy       = currentStaff!.id;
-        e.expenseDate    = new Date().toISOString().split('T')[0];
+        e.categoryId      = selectedCatId;
+        e.description     = description.trim();
+        e.amount          = amountCents;
+        e.paidBy          = paidBy.trim() || currentStaff!.name;
+        e.loggedBy        = currentStaff!.id;
+        e.expenseDate     = new Date().toISOString().split('T')[0];
         e.receiptPhotoUrl = receiptImageUrl;
-        e.source         = receiptImageUrl ? 'scanned' : 'manual';
-        e.vendorName     = vendorName.trim() || null;
+        e.source          = receiptImageUrl ? 'scanned' : 'manual';
+        e.vendorName      = vendorName.trim() || null;
       });
     });
 
-    resetForm();
-    setShowAdd(false);
+    resetForm(); setShowAdd(false);
     Alert.alert('Saved', `${formatKES(amountCents)} expense recorded.`);
     await loadData();
   };
-
-  // ── receipt scan ──────────────────────────────────────────────────────────
 
   const handleScanReceipt = async () => {
     setShowAdd(false);
@@ -177,224 +203,449 @@ export default function ExpensesScreen() {
     setShowAdd(true);
   };
 
+  // ── assistant helpers ─────────────────────────────────────────────────────
+
+  const handleSendMessage = () => {
+    if (!chatInput.trim()) return;
+    const userMsg = chatInput.trim();
+    setChatInput('');
+    const q = userMsg.toLowerCase();
+    let botText = '';
+    if (q.includes('last month') || q.includes('prior month')) {
+      botText = priorTotal > 0 ? `Last month you spent ${formatKsh(priorTotal)}.` : 'No expenses recorded for last month.';
+    } else if ((q.includes('biggest') || q.includes('most')) && q.includes('categor')) {
+      botText = biggestCatId ? `Your biggest expense category is "${biggestCatName}" — ${formatKsh(catTotals[biggestCatId] || 0)} this month.` : 'No expense categories found for this month.';
+    } else if (q.includes('supplier') || q.includes('vendor')) {
+      const vt: Record<string, number> = {};
+      for (const e of allExpenses) { if (e.vendorName) vt[e.vendorName] = (vt[e.vendorName] || 0) + e.amount; }
+      const top = Object.entries(vt).sort((a, b) => b[1] - a[1])[0];
+      botText = top ? `Your top supplier is "${top[0]}" at ${formatKsh(top[1])}.` : 'No vendor data recorded yet.';
+    } else if (q.includes('average') || q.includes('avg') || q.includes('per day')) {
+      botText = `Your daily spending average this month is ${formatKsh(avgPerDay)}.`;
+    } else {
+      botText = monthExpenses.length > 0
+        ? `This month: ${formatKsh(monthTotal)} across ${monthExpenses.length} expense${monthExpenses.length !== 1 ? 's' : ''}. Biggest category: ${biggestCatName}.`
+        : 'No expenses recorded this month yet.';
+    }
+    setChatMessages(prev => [...prev, { role: 'user' as const, text: userMsg }, { role: 'bot' as const, text: botText }]);
+  };
+
+  const filteredExpenses = searchQuery.trim()
+    ? allExpenses.filter(e =>
+        e.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (e.vendorName ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (catNames[e.categoryId] ?? '').toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : [];
+
+  const MonthNav = () => (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 14 }}>
+      <TouchableOpacity onPress={() => setViewMonth(m => addMonths(m, -1))} style={{ padding: 6 }}>
+        <Feather name="chevron-left" size={20} color="#374151" />
+      </TouchableOpacity>
+      <Text style={{ fontSize: 17, fontWeight: '700', color: '#111827', marginHorizontal: 20 }}>
+        {MONTH_NAMES[viewMonth.getMonth()]} {viewMonth.getFullYear()}
+      </Text>
+      <TouchableOpacity onPress={() => setViewMonth(m => addMonths(m, 1))} style={{ padding: 6 }}>
+        <Feather name="chevron-right" size={20} color="#374151" />
+      </TouchableOpacity>
+    </View>
+  );
+
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
     <View style={{ flex: 1, backgroundColor: BG }}>
-      <SafeAreaView style={{ flex: 1 }}>
-        {/* Header */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 }}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Feather name="arrow-left" size={22} color={INDIGO} />
-          </TouchableOpacity>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: INDIGO_D }}>Expenses</Text>
-          <View style={{ width: 22 }} />
-        </View>
+      <SafeAreaView style={{ flex: 1 }} edges={['top']}>
 
-        {/* Month navigator */}
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 10 }}>
-          <TouchableOpacity onPress={() => setViewMonth((m) => addMonths(m, -1))} style={{ padding: 8 }}>
-            <Feather name="chevron-left" size={20} color={INDIGO} />
-          </TouchableOpacity>
-          <Text style={{ fontSize: 16, fontWeight: '700', color: INDIGO_D, marginHorizontal: 16 }}>
-            {MONTH_NAMES[viewMonth.getMonth()]} {viewMonth.getFullYear()}
-          </Text>
-          <TouchableOpacity onPress={() => setViewMonth((m) => addMonths(m, 1))} style={{ padding: 8 }}>
-            <Feather name="chevron-right" size={20} color={INDIGO} />
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
-          {/* Summary card */}
-          <View style={{
-            backgroundColor: INDIGO, borderRadius: 20, padding: 22, marginBottom: 14,
-            shadowColor: INDIGO, shadowOpacity: 0.4, shadowRadius: 12, elevation: 6,
-          }}>
-            <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, marginBottom: 6 }}>This month</Text>
-            <Text style={{ color: '#fff', fontSize: 34, fontWeight: '800', marginBottom: 4 }}>
-              {formatKES(monthTotal)}
-            </Text>
-            <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>
-              {monthExpenses.length > 0
-                ? `${monthExpenses.length} expense${monthExpenses.length !== 1 ? 's' : ''} recorded`
-                : 'No expenses recorded yet'}
-            </Text>
-          </View>
-
-          {/* KPI tiles */}
-          <View style={{ flexDirection: 'row', gap: 12, marginBottom: 14 }}>
-            <View style={{ flex: 1, backgroundColor: '#fff', borderRadius: 16, padding: 16, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, elevation: 2 }}>
-              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#ede9fe', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
-                <Feather name="tag" size={16} color={INDIGO} />
+        {/* ── HOME TAB ──────────────────────────────────────────────────── */}
+        {activeTab === 'home' && (
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }}
+            showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={INDIGO} />}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 14, paddingBottom: 4 }}>
+              <Text style={{ fontSize: 26, fontWeight: '700', color: '#111827' }}>{getGreeting()}</Text>
+              <TouchableOpacity onPress={loadData} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Feather name="refresh-cw" size={20} color="#555" />
+              </TouchableOpacity>
+            </View>
+            <MonthNav />
+            <LinearGradient colors={['#4F46E5', '#312E81']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
+              style={{ borderRadius: 22, padding: 26, marginBottom: 16 }}>
+              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14, marginBottom: 10 }}>This month</Text>
+              <Text style={{ color: '#fff', fontSize: 40, fontWeight: '800', letterSpacing: -1, marginBottom: 8 }}>{formatKsh(monthTotal)}</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13 }}>
+                {priorTotal > 0 ? `${formatKsh(priorTotal)} last month` : 'No prior month'}
+              </Text>
+            </LinearGradient>
+            <View style={{ backgroundColor: '#fff', borderRadius: 18, padding: 18, flexDirection: 'row', alignItems: 'center', marginBottom: 16, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 8, elevation: 3 }}>
+              <View style={{ width: 48, height: 48, borderRadius: 14, backgroundColor: LAVENDER, alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
+                <Feather name="bar-chart-2" size={22} color={INDIGO} />
               </View>
-              <Text style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>Biggest category</Text>
-              <Text style={{ fontSize: 15, fontWeight: '700', color: INDIGO_D }}>{biggestCatName}</Text>
-              {biggestCatId && (
-                <Text style={{ fontSize: 12, color: INDIGO, marginTop: 2 }}>{formatKES(catTotals[biggestCatId] || 0)}</Text>
-              )}
-            </View>
-            <View style={{ flex: 1, backgroundColor: '#fff', borderRadius: 16, padding: 16, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, elevation: 2 }}>
-              <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#dcfce7', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
-                <Feather name="calendar" size={16} color="#16a34a" />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 4 }}>Business Health Score</Text>
+                <Text style={{ fontSize: 13, color: MUTED, lineHeight: 19 }}>
+                  {scoreUnlocked ? 'Your score is unlocked — keep scanning!' : 'Scan at least 5 receipts to unlock your score'}
+                </Text>
               </View>
-              <Text style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>Avg / day</Text>
-              <Text style={{ fontSize: 15, fontWeight: '700', color: INDIGO_D }}>{formatKES(avgPerDay)}</Text>
-              <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{monthExpenses.length} expenses</Text>
             </View>
-          </View>
-
-          {/* Expense list */}
-          <Text style={{ fontSize: 14, fontWeight: '700', color: INDIGO_D, marginBottom: 10 }}>
-            {MONTH_NAMES[viewMonth.getMonth()]} Expenses
-          </Text>
-
-          {loading ? (
-            <ActivityIndicator color={INDIGO} style={{ marginTop: 32 }} />
-          ) : monthExpenses.length === 0 ? (
-            <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-              <Feather name="inbox" size={40} color="#c4b5fd" />
-              <Text style={{ color: '#94a3b8', marginTop: 12, fontSize: 14 }}>No expenses this month</Text>
-              <Text style={{ color: '#c4b5fd', fontSize: 12, marginTop: 4 }}>Tap + to add one</Text>
-            </View>
-          ) : (
-            monthExpenses.map((exp) => (
-              <View key={exp.id} style={{
-                backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 10,
-                flexDirection: 'row', alignItems: 'center',
-                shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, elevation: 1,
-              }}>
-                <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: '#ede9fe', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-                  <Feather name="file-text" size={18} color={INDIGO} />
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 28 }}>
+              <View style={{ flex: 1, backgroundColor: '#fff', borderRadius: 18, padding: 16, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, elevation: 2 }}>
+                <View style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: LAVENDER, alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                  <Feather name="layers" size={18} color={INDIGO} />
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 14, fontWeight: '600', color: INDIGO_D }} numberOfLines={1}>{exp.description}</Text>
-                  <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>
-                    {catNames[exp.categoryId] || 'Other'} · {exp.expenseDate}
-                    {exp.vendorName ? ` · ${exp.vendorName}` : ''}
+                <Text style={{ fontSize: 12, color: MUTED, marginBottom: 6 }}>Biggest category</Text>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{biggestCatName}</Text>
+              </View>
+              <View style={{ flex: 1, backgroundColor: '#fff', borderRadius: 18, padding: 16, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, elevation: 2 }}>
+                <View style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: MINT_BG, alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                  <Feather name="calendar" size={18} color={MINT} />
+                </View>
+                <Text style={{ fontSize: 12, color: MUTED, marginBottom: 6 }}>Avg / day</Text>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827' }}>{formatKsh(avgPerDay)}</Text>
+                <Text style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>{monthExpenses.length} receipts</Text>
+              </View>
+            </View>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: '#111827', marginBottom: 12 }}>Financial coach</Text>
+            <View style={{ backgroundColor: COACH_BG, borderRadius: 18, padding: 18, flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ width: 42, height: 42, borderRadius: 12, backgroundColor: LAVENDER, alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
+                <Feather name="zap" size={20} color={INDIGO} />
+              </View>
+              <Text style={{ flex: 1, fontSize: 14, color: '#374151', lineHeight: 21 }}>
+                {monthExpenses.length === 0 ? 'Scan your first receipt to unlock personalised money insights.' : `You've spent ${formatKsh(monthTotal)} this month across ${monthExpenses.length} receipt${monthExpenses.length !== 1 ? 's' : ''}.`}
+              </Text>
+            </View>
+          </ScrollView>
+        )}
+
+        {/* ── RECEIPTS TAB ──────────────────────────────────────────────── */}
+        {activeTab === 'receipts' && (
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }}
+            showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={INDIGO} />}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 14, paddingBottom: 4 }}>
+              <Text style={{ fontSize: 22, fontWeight: '700', color: '#111827' }}>Receipts</Text>
+              <TouchableOpacity onPress={loadData} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Feather name="refresh-cw" size={20} color="#555" />
+              </TouchableOpacity>
+            </View>
+            <MonthNav />
+            {loading ? (
+              <ActivityIndicator color={INDIGO} style={{ marginTop: 40 }} />
+            ) : monthExpenses.length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 60 }}>
+                <Feather name="inbox" size={48} color="#C4B5FD" />
+                <Text style={{ color: MUTED, marginTop: 16, fontSize: 15 }}>No expenses this month</Text>
+                <Text style={{ color: '#C4B5FD', fontSize: 13, marginTop: 4 }}>Tap the + button to add one</Text>
+              </View>
+            ) : (
+              monthExpenses.map((exp) => (
+                <View key={exp.id} style={{ backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 }}>
+                  <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: LAVENDER, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                    <Feather name="file-text" size={18} color={INDIGO} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: INDIGO_D }} numberOfLines={1}>{exp.description}</Text>
+                    <Text style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>
+                      {catNames[exp.categoryId] || 'Other'} · {exp.expenseDate}{exp.vendorName ? ` · ${exp.vendorName}` : ''}
+                    </Text>
+                    <Text style={{ fontSize: 10, color: '#C4B5FD', marginTop: 1 }}>Paid by {exp.paidBy}</Text>
+                  </View>
+                  <Text style={{ fontSize: 15, fontWeight: '800', color: '#DC2626' }}>{formatKES(exp.amount)}</Text>
+                </View>
+              ))
+            )}
+          </ScrollView>
+        )}
+
+        {/* ── ANALYTICS TAB ─────────────────────────────────────────────── */}
+        {activeTab === 'analytics' && (
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }}
+            showsVerticalScrollIndicator={false}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={INDIGO} />}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 14, paddingBottom: 4 }}>
+              <Text style={{ fontSize: 22, fontWeight: '700', color: '#111827' }}>Analytics</Text>
+              <TouchableOpacity onPress={loadData} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Feather name="refresh-cw" size={20} color="#555" />
+              </TouchableOpacity>
+            </View>
+            <MonthNav />
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 20 }}>
+              {([
+                { label: 'Total', value: formatKsh(monthTotal), icon: 'trending-up', bg: LAVENDER, col: INDIGO },
+                { label: 'Avg/Day', value: formatKsh(avgPerDay), icon: 'calendar', bg: MINT_BG, col: MINT },
+                { label: 'Expenses', value: String(monthExpenses.length), icon: 'file-text', bg: '#FEF3C7', col: '#D97706' },
+              ] as const).map(item => (
+                <View key={item.label} style={{ flex: 1, backgroundColor: '#fff', borderRadius: 16, padding: 12, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 }}>
+                  <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: item.bg, alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+                    <Feather name={item.icon as any} size={16} color={item.col} />
+                  </View>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#111827' }}>{item.value}</Text>
+                  <Text style={{ fontSize: 10, color: MUTED, marginTop: 2 }}>{item.label}</Text>
+                </View>
+              ))}
+            </View>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 12 }}>Spending by Category</Text>
+            {Object.keys(catTotals).length === 0 ? (
+              <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                <Feather name="pie-chart" size={40} color="#C4B5FD" />
+                <Text style={{ color: MUTED, marginTop: 12, fontSize: 14 }}>No data for this month</Text>
+              </View>
+            ) : (
+              Object.entries(catTotals).sort((a, b) => b[1] - a[1]).map(([catId, total]) => {
+                const pct = monthTotal > 0 ? (total / monthTotal) * 100 : 0;
+                return (
+                  <View key={catId} style={{ backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: INDIGO_D }}>{catNames[catId] || 'Other'}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        <Text style={{ fontSize: 11, color: MUTED }}>{pct.toFixed(0)}%</Text>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: '#DC2626' }}>{formatKsh(total)}</Text>
+                      </View>
+                    </View>
+                    <View style={{ height: 6, backgroundColor: '#F1F5F9', borderRadius: 3 }}>
+                      <View style={{ height: 6, width: `${pct}%` as any, backgroundColor: INDIGO, borderRadius: 3 }} />
+                    </View>
+                  </View>
+                );
+              })
+            )}
+            {monthExpenses.length > 0 && (
+              <>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827', marginTop: 8, marginBottom: 12 }}>Top Expenses</Text>
+                {[...monthExpenses].sort((a, b) => b.amount - a.amount).slice(0, 5).map((exp) => (
+                  <View key={exp.id} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 8, shadowColor: '#000', shadowOpacity: 0.03, shadowRadius: 4, elevation: 1 }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: INDIGO_D }} numberOfLines={1}>{exp.description}</Text>
+                      <Text style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{catNames[exp.categoryId] || 'Other'} · {exp.expenseDate}</Text>
+                    </View>
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: '#DC2626' }}>{formatKsh(exp.amount)}</Text>
+                  </View>
+                ))}
+              </>
+            )}
+          </ScrollView>
+        )}
+
+        {/* ── ASSISTANT TAB ─────────────────────────────────────────────── */}
+        {activeTab === 'assistant' && (
+          <View style={{ flex: 1 }}>
+            {/* Sub-tabs */}
+            <View style={{ flexDirection: 'row', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#E5E7EB' }}>
+              {(['ai', 'search'] as const).map(t => (
+                <TouchableOpacity key={t} onPress={() => setAssistantSubTab(t)}
+                  style={{ flex: 1, alignItems: 'center', paddingVertical: 12 }}>
+                  <Feather name={t === 'ai' ? 'cpu' : 'search'} size={18} color={assistantSubTab === t ? INDIGO : ICON_OFF} />
+                  <Text style={{ fontSize: 12, fontWeight: '600', marginTop: 3, color: assistantSubTab === t ? INDIGO : LABEL_OFF }}>
+                    {t === 'ai' ? 'Ask AI' : 'Search'}
                   </Text>
-                  <Text style={{ fontSize: 10, color: '#c4b5fd', marginTop: 1 }}>Paid by {exp.paidBy}</Text>
-                </View>
-                <Text style={{ fontSize: 15, fontWeight: '800', color: '#dc2626' }}>{formatKES(exp.amount)}</Text>
-              </View>
-            ))
-          )}
-        </ScrollView>
+                  {assistantSubTab === t && (
+                    <View style={{ position: 'absolute', bottom: 0, left: '25%', right: '25%', height: 2.5, backgroundColor: INDIGO, borderRadius: 2 }} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
 
-        {/* Floating FAB with pulse */}
-        <View style={{ position: 'absolute', bottom: 28, left: 0, right: 0, alignItems: 'center' }} pointerEvents="box-none">
-          <Animated.View style={{
-            position: 'absolute',
-            width: 68, height: 68, borderRadius: 34,
-            backgroundColor: INDIGO,
-            opacity: 0.28,
-            transform: [{ scale: pulse }],
-          }} />
-          <TouchableOpacity
-            onPress={openAdd}
-            style={{
-              width: 60, height: 60, borderRadius: 30,
-              backgroundColor: INDIGO,
-              alignItems: 'center', justifyContent: 'center',
-              shadowColor: INDIGO, shadowOpacity: 0.55, shadowRadius: 12, elevation: 10,
-            }}
-            activeOpacity={0.85}
-          >
-            <Feather name="plus" size={28} color="#fff" />
-          </TouchableOpacity>
+            {/* Ask AI */}
+            {assistantSubTab === 'ai' && (
+              <>
+                {chatMessages.length === 0 ? (
+                  <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 36, paddingBottom: 20, alignItems: 'center' }}>
+                    <View style={{ width: 80, height: 80, borderRadius: 20, backgroundColor: LAVENDER, alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
+                      <Feather name="cpu" size={40} color={INDIGO} />
+                    </View>
+                    <Text style={{ fontSize: 24, fontWeight: '800', color: INDIGO_D, marginBottom: 10 }}>Ask Your Business</Text>
+                    <Text style={{ fontSize: 14, color: MUTED, textAlign: 'center', lineHeight: 22, marginBottom: 32 }}>
+                      Ask anything about your spending, suppliers, or expenses.
+                    </Text>
+                    <Text style={{ fontSize: 13, color: MUTED, alignSelf: 'flex-start', marginBottom: 12 }}>Try asking:</Text>
+                    {[
+                      'How much did I spend last month?',
+                      'Which supplier costs me the most?',
+                      'What is my biggest expense category?',
+                      'How much have I spent this month?',
+                    ].map(q => (
+                      <TouchableOpacity key={q} onPress={() => setChatInput(q)}
+                        style={{ width: '100%', flexDirection: 'row', alignItems: 'center', backgroundColor: LAVENDER, borderRadius: 14, padding: 16, marginBottom: 10 }}>
+                        <Feather name="message-square" size={16} color={INDIGO} style={{ marginRight: 12 }} />
+                        <Text style={{ flex: 1, fontSize: 14, color: INDIGO_D, fontWeight: '500' }}>{q}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                ) : (
+                  <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 16, paddingBottom: 16 }}>
+                    {chatMessages.map((msg, i) => (
+                      <View key={i} style={{ flexDirection: 'row', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start', marginBottom: 12 }}>
+                        {msg.role === 'bot' && (
+                          <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: LAVENDER, alignItems: 'center', justifyContent: 'center', marginRight: 8, marginTop: 2 }}>
+                            <Feather name="cpu" size={14} color={INDIGO} />
+                          </View>
+                        )}
+                        <View style={{ maxWidth: '75%', backgroundColor: msg.role === 'user' ? INDIGO : '#fff', borderRadius: 16, padding: 14, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 }}>
+                          <Text style={{ fontSize: 14, color: msg.role === 'user' ? '#fff' : INDIGO_D, lineHeight: 21 }}>{msg.text}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </ScrollView>
+                )}
+              </>
+            )}
+
+            {/* Search */}
+            {assistantSubTab === 'search' && (
+              <View style={{ flex: 1 }}>
+                <View style={{ paddingHorizontal: 18, paddingTop: 14, paddingBottom: 10 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1F5F9', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10 }}>
+                    <Feather name="search" size={16} color={MUTED} style={{ marginRight: 10 }} />
+                    <TextInput style={{ flex: 1, fontSize: 14, color: INDIGO_D }} value={searchQuery} onChangeText={setSearchQuery}
+                      placeholder="Search expenses..." placeholderTextColor={MUTED} />
+                    {searchQuery.length > 0 && (
+                      <TouchableOpacity onPress={() => setSearchQuery('')}>
+                        <Feather name="x" size={16} color={MUTED} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 }}>
+                  {searchQuery.trim().length === 0 ? (
+                    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                      <Feather name="search" size={40} color="#C4B5FD" />
+                      <Text style={{ color: MUTED, marginTop: 12, fontSize: 14 }}>Type to search expenses</Text>
+                    </View>
+                  ) : filteredExpenses.length === 0 ? (
+                    <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                      <Feather name="inbox" size={40} color="#C4B5FD" />
+                      <Text style={{ color: MUTED, marginTop: 12, fontSize: 14 }}>No results for "{searchQuery}"</Text>
+                    </View>
+                  ) : (
+                    filteredExpenses.map(exp => (
+                      <View key={exp.id} style={{ backgroundColor: '#fff', borderRadius: 14, padding: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 4, elevation: 1 }}>
+                        <View style={{ width: 40, height: 40, borderRadius: 12, backgroundColor: LAVENDER, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                          <Feather name="file-text" size={18} color={INDIGO} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 14, fontWeight: '600', color: INDIGO_D }} numberOfLines={1}>{exp.description}</Text>
+                          <Text style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>{catNames[exp.categoryId] || 'Other'} · {exp.expenseDate}{exp.vendorName ? ` · ${exp.vendorName}` : ''}</Text>
+                        </View>
+                        <Text style={{ fontSize: 14, fontWeight: '800', color: '#DC2626' }}>{formatKES(exp.amount)}</Text>
+                      </View>
+                    ))
+                  )}
+                </ScrollView>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* ── Bottom Navigation Bar ────────────────────────────────────── */}
+        <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0 }}>
+          {/* Chat input — visible only on Assistant AI sub-tab */}
+          {activeTab === 'assistant' && assistantSubTab === 'ai' && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E5E7EB' }}>
+              <View style={{ flex: 1, backgroundColor: '#F1F5F9', borderRadius: 24, paddingHorizontal: 16, paddingVertical: 10, marginRight: 10 }}>
+                <TextInput
+                  style={{ fontSize: 14, color: INDIGO_D }}
+                  value={chatInput}
+                  onChangeText={setChatInput}
+                  placeholder="Ask about your spending..."
+                  placeholderTextColor={MUTED}
+                  onSubmitEditing={handleSendMessage}
+                  returnKeyType="send"
+                />
+              </View>
+              <TouchableOpacity onPress={handleSendMessage}
+                style={{ width: 42, height: 42, borderRadius: 21, backgroundColor: chatInput.trim() ? INDIGO : '#E2E8F0', alignItems: 'center', justifyContent: 'center' }}>
+                <Feather name="send" size={18} color={chatInput.trim() ? '#fff' : MUTED} />
+              </TouchableOpacity>
+            </View>
+          )}
+          {/* FAB — shifts up when chat input is present */}
+          <View style={{ position: 'absolute', top: activeTab === 'assistant' && assistantSubTab === 'ai' ? -86 : -30, left: 0, right: 0, alignItems: 'center', zIndex: 20 }}>
+            <TouchableOpacity onPress={openAdd} activeOpacity={0.85}
+              style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: INDIGO, alignItems: 'center', justifyContent: 'center', shadowColor: INDIGO, shadowOpacity: 0.5, shadowRadius: 12, elevation: 14 }}>
+              <Feather name="maximize" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
+          <View style={{ backgroundColor: '#fff', flexDirection: 'row', paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10), paddingHorizontal: 4, borderTopWidth: 0.5, borderTopColor: '#E5E7EB', shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 12, elevation: 12 }}>
+            <TabItem icon="grid"        label="Home"      active={activeTab === 'home'}      onPress={() => setActiveTab('home')} />
+            <TabItem icon="file-text"   label="Receipts"  active={activeTab === 'receipts'}  onPress={() => setActiveTab('receipts')} />
+            <View style={{ flex: 1 }} />
+            <TabItem icon="bar-chart-2" label="Analytics" active={activeTab === 'analytics'} onPress={() => setActiveTab('analytics')} />
+            <TabItem icon="cpu"         label="Assistant" active={activeTab === 'assistant'} onPress={() => setActiveTab('assistant')} />
+          </View>
         </View>
+
       </SafeAreaView>
 
-      {/* ── Add Expense Modal ───────────────────────────────────────────────── */}
+      {/* ── Add Expense Modal ─────────────────────────────────────────────── */}
       <Modal visible={showAdd} transparent animationType="slide">
         <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
-          <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24, paddingBottom: 36 }}>
-            {/* Modal header */}
+          <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24, paddingBottom: 40 }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <Text style={{ fontSize: 18, fontWeight: '800', color: INDIGO_D }}>Record Expense</Text>
               <TouchableOpacity onPress={() => setShowAdd(false)}>
-                <Feather name="x" size={22} color="#94a3b8" />
+                <Feather name="x" size={22} color={MUTED} />
               </TouchableOpacity>
             </View>
 
-            {/* Scan receipt shortcut */}
             <TouchableOpacity
               onPress={handleScanReceipt}
-              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#ede9fe', borderRadius: 12, padding: 12, marginBottom: 18 }}
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: LAVENDER, borderRadius: 12, padding: 13, marginBottom: 18 }}
             >
               <Feather name="camera" size={18} color={INDIGO} />
               <Text style={{ fontSize: 13, fontWeight: '600', color: INDIGO, marginLeft: 10 }}>Scan a receipt instead</Text>
             </TouchableOpacity>
 
-            {/* Category pills */}
-            <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 8 }}>Category</Text>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 8 }}>Category</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 {categories.map((cat) => (
                   <TouchableOpacity
                     key={cat.id}
                     onPress={() => setSelectedCatId(cat.id)}
-                    style={{
-                      paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
-                      backgroundColor: selectedCatId === cat.id ? INDIGO : '#f1f5f9',
-                    }}
+                    style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, backgroundColor: selectedCatId === cat.id ? INDIGO : '#F1F5F9' }}
                   >
-                    <Text style={{ fontSize: 13, fontWeight: '600', color: selectedCatId === cat.id ? '#fff' : '#475569' }}>
-                      {cat.name}
-                    </Text>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: selectedCatId === cat.id ? '#fff' : '#475569' }}>{cat.name}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
             </ScrollView>
 
-            {/* Description */}
-            <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 6 }}>Description *</Text>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 6 }}>Description *</Text>
             <TextInput
-              style={{ borderWidth: 1.5, borderColor: '#e2e8f0', borderRadius: 12, padding: 12, fontSize: 15, marginBottom: 14, color: INDIGO_D }}
-              value={description}
-              onChangeText={setDescription}
-              placeholder="e.g. Cleaning supplies"
-              placeholderTextColor="#94a3b8"
+              style={{ borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 12, padding: 12, fontSize: 15, marginBottom: 14, color: INDIGO_D }}
+              value={description} onChangeText={setDescription}
+              placeholder="e.g. Cleaning supplies" placeholderTextColor={MUTED}
             />
 
-            {/* Amount */}
-            <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 6 }}>Amount (KES) *</Text>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 6 }}>Amount (KES) *</Text>
             <TextInput
-              style={{ borderWidth: 1.5, borderColor: '#e2e8f0', borderRadius: 12, padding: 12, fontSize: 15, marginBottom: 14, color: INDIGO_D }}
-              value={amount}
-              onChangeText={setAmount}
-              placeholder="0.00"
-              placeholderTextColor="#94a3b8"
-              keyboardType="numeric"
+              style={{ borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 12, padding: 12, fontSize: 15, marginBottom: 14, color: INDIGO_D }}
+              value={amount} onChangeText={setAmount}
+              placeholder="0.00" placeholderTextColor={MUTED} keyboardType="numeric"
             />
 
-            {/* Vendor + Paid By in a row */}
-            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 22 }}>
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 24 }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 6 }}>Vendor</Text>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 6 }}>Vendor</Text>
                 <TextInput
-                  style={{ borderWidth: 1.5, borderColor: '#e2e8f0', borderRadius: 12, padding: 12, fontSize: 14, color: INDIGO_D }}
-                  value={vendorName}
-                  onChangeText={setVendorName}
-                  placeholder="Optional"
-                  placeholderTextColor="#94a3b8"
+                  style={{ borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 12, padding: 12, fontSize: 14, color: INDIGO_D }}
+                  value={vendorName} onChangeText={setVendorName} placeholder="Optional" placeholderTextColor={MUTED}
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#64748b', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 6 }}>Paid By</Text>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 6 }}>Paid By</Text>
                 <TextInput
-                  style={{ borderWidth: 1.5, borderColor: '#e2e8f0', borderRadius: 12, padding: 12, fontSize: 14, color: INDIGO_D }}
-                  value={paidBy}
-                  onChangeText={setPaidBy}
-                  placeholder={currentStaff?.name || 'Staff'}
-                  placeholderTextColor="#94a3b8"
+                  style={{ borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 12, padding: 12, fontSize: 14, color: INDIGO_D }}
+                  value={paidBy} onChangeText={setPaidBy}
+                  placeholder={currentStaff?.name || 'Staff'} placeholderTextColor={MUTED}
                 />
               </View>
             </View>
 
-            {/* Save button */}
             <TouchableOpacity
               onPress={handleAddExpense}
-              style={{ backgroundColor: INDIGO, borderRadius: 14, paddingVertical: 15, alignItems: 'center' }}
+              style={{ backgroundColor: INDIGO, borderRadius: 14, paddingVertical: 16, alignItems: 'center' }}
             >
               <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800' }}>Save Expense</Text>
             </TouchableOpacity>

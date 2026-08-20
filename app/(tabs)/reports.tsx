@@ -3,6 +3,7 @@ import {
   View, Text, ScrollView, TouchableOpacity, Modal,
   Alert, ActivityIndicator, Pressable,
 } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { router } from 'expo-router';
@@ -49,19 +50,19 @@ interface ReportMeta {
 }
 
 const REPORTS: ReportMeta[] = [
-  { key: 'sales',      icon: '📊', label: 'Sales Summary',          desc: 'Revenue, orders, avg order, daily breakdown', hasPeriod: true, hasPDF: true },
-  { key: 'pnl',        icon: '📉', label: 'Profit & Loss',           desc: 'Revenue → COGS → Gross Profit → Net Profit', hasPeriod: true, hasPDF: true },
-  { key: 'products',   icon: '🏆', label: 'Product Performance',     desc: 'Revenue, cost & margin per product', hasPeriod: true },
-  { key: 'categories', icon: '🗂️', label: 'Category Analysis',       desc: 'Bar vs Kitchen revenue & margin breakdown', hasPeriod: true },
-  { key: 'payments',   icon: '💳', label: 'Payment Methods',          desc: 'Cash / M-Pesa / card split, refunds & peak hours', hasPeriod: true },
-  { key: 'staff',      icon: '👤', label: 'Staff Performance',        desc: 'Orders & revenue per team member', hasPeriod: true, adminOnly: true },
-  { key: 'shifts',     icon: '🔄', label: 'Shift Reconciliation',     desc: 'Cash opening vs closing & variance per shift', hasPeriod: true },
-  { key: 'expenses',   icon: '🧾', label: 'Expense Report',           desc: 'All costs with vendors, categories & dates', hasPeriod: true, hasPDF: true },
-  { key: 'discounts',  icon: '🎁', label: 'Discounts, Voids & Comps', desc: 'Revenue lost to discounts, voids & freebies', hasPeriod: true },
-  { key: 'stock',      icon: '📦', label: 'Stock Movement',           desc: 'Restocks, wastage, breakage & corrections log', hasPeriod: true },
-  { key: 'lowstock',   icon: '⚠️', label: 'Low Stock Alerts',         desc: 'Items running low or out of stock right now', hasPeriod: false },
-  { key: 'debtors',    icon: '💰', label: 'Debtors & Credit',         desc: 'Outstanding customer balances & history', hasPeriod: false },
-  { key: 'hourly',     icon: '⏰', label: 'Hourly Sales',             desc: 'When is business busiest by hour of day', hasPeriod: true },
+  { key: 'sales',      icon: 'bar-chart-2',    label: 'Sales Summary',          desc: 'Revenue, orders, avg order, daily breakdown', hasPeriod: true, hasPDF: true },
+  { key: 'pnl',        icon: 'trending-up',    label: 'Profit & Loss',           desc: 'Revenue → COGS → Gross Profit → Net Profit', hasPeriod: true, hasPDF: true },
+  { key: 'products',   icon: 'award',          label: 'Product Performance',     desc: 'Revenue, cost & margin per product', hasPeriod: true },
+  { key: 'categories', icon: 'grid',           label: 'Category Analysis',       desc: 'Bar vs Kitchen revenue & margin breakdown', hasPeriod: true },
+  { key: 'payments',   icon: 'credit-card',    label: 'Payment Methods',          desc: 'Cash / M-Pesa / card split, refunds & peak hours', hasPeriod: true },
+  { key: 'staff',      icon: 'users',          label: 'Staff Performance',        desc: 'Orders & revenue per team member', hasPeriod: true, adminOnly: true },
+  { key: 'shifts',     icon: 'refresh-cw',     label: 'Shift Reconciliation',     desc: 'Cash opening vs closing & variance per shift', hasPeriod: true },
+  { key: 'expenses',   icon: 'file-text',      label: 'Expense Report',           desc: 'All costs with vendors, categories & dates', hasPeriod: true, hasPDF: true },
+  { key: 'discounts',  icon: 'tag',            label: 'Discounts, Voids & Comps', desc: 'Revenue lost to discounts, voids & freebies', hasPeriod: true },
+  { key: 'stock',      icon: 'package',        label: 'Stock Movement',           desc: 'Restocks, wastage, breakage & corrections log', hasPeriod: true },
+  { key: 'lowstock',   icon: 'alert-triangle', label: 'Low Stock Alerts',         desc: 'Items running low or out of stock right now', hasPeriod: false },
+  { key: 'debtors',    icon: 'dollar-sign',    label: 'Debtors & Credit',         desc: 'Outstanding customer balances & history', hasPeriod: false },
+  { key: 'hourly',     icon: 'clock',          label: 'Hourly Sales',             desc: 'When is business busiest by hour of day', hasPeriod: true },
 ];
 
 const PERIODS: { key: Period; label: string }[] = [
@@ -691,8 +692,8 @@ export default function ReportsScreen() {
       {/* Header */}
       <View style={{ backgroundColor: '#fff', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8, borderBottomWidth: 1, borderBottomColor: '#e2e8f0' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Text style={{ fontSize: 15, color: '#4338CA' }}>← Home</Text>
+          <TouchableOpacity onPress={() => router.back()} style={{ padding: 6 }}>
+            <Feather name="arrow-left" size={22} color="#4338CA" />
           </TouchableOpacity>
           <Text style={{ fontSize: 17, fontWeight: '700', color: '#1e1b4b' }}>Reports</Text>
           <View style={{ flexDirection: 'row' }}>
@@ -720,7 +721,7 @@ export default function ReportsScreen() {
           onPress={() => setSelectorOpen(true)}
           style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f8fafc', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, borderWidth: 1, borderColor: '#e2e8f0' }}
         >
-          <Text style={{ fontSize: 16, marginRight: 8 }}>{meta.icon}</Text>
+          <Feather name={meta.icon as any} size={18} color="#64748b" style={{ marginRight: 8 }} />
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 14, fontWeight: '700', color: '#1e1b4b' }}>{meta.label}</Text>
             <Text style={{ fontSize: 11, color: '#94a3b8' }}>{meta.desc}</Text>
@@ -784,14 +785,16 @@ export default function ReportsScreen() {
               <TouchableOpacity
                 key={r.key}
                 onPress={() => { setActiveReport(r.key); setSelectorOpen(false); }}
-                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f8fafc', backgroundColor: activeReport === r.key ? '#fef2f2' : '#fff' }}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: '#f8fafc', backgroundColor: activeReport === r.key ? '#ede9fe' : '#fff' }}
               >
-                <Text style={{ fontSize: 22, marginRight: 14 }}>{r.icon}</Text>
+                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: activeReport === r.key ? '#4338CA' : '#f1f5f9', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                  <Feather name={r.icon as any} size={18} color={activeReport === r.key ? '#fff' : '#64748b'} />
+                </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 14, fontWeight: '600', color: activeReport === r.key ? '#4338CA' : '#1e1b4b' }}>{r.label}</Text>
                   <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 1 }}>{r.desc}</Text>
                 </View>
-                {activeReport === r.key && <Text style={{ color: '#4338CA', fontSize: 16 }}>✓</Text>}
+                {activeReport === r.key && <Feather name="check" size={16} color="#4338CA" />}
               </TouchableOpacity>
             ))}
             <View style={{ height: 40 }} />

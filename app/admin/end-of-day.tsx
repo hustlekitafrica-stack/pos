@@ -7,6 +7,7 @@ import { Order, Shift, Payment, Expense } from '@/lib/db/models';
 import { Q } from '@nozbe/watermelondb';
 import { formatKES } from '@/utils/currency';
 import { useAuthStore } from '@/stores/authStore';
+import { useDeviceStore } from '@/stores/deviceStore';
 import { triggerLowStockAlerts } from '@/lib/reports/lowStockAlert';
 
 interface EODSummary {
@@ -24,6 +25,7 @@ export default function EndOfDayScreen() {
   const [closing, setClosing] = useState(false);
   const currentStaff = useAuthStore((s) => s.currentStaff);
   const can = useAuthStore((s) => s.can);
+  const deviceId = useDeviceStore((s) => s.deviceId) ?? '';
 
   const loadSummary = useCallback(async () => {
     setLoading(true);
@@ -124,7 +126,7 @@ export default function EndOfDayScreen() {
                   a.entityType = 'system';
                   a.entityId = '';
                   a.staffId = currentStaff!.id;
-                  a.deviceId = '';
+                  a.deviceId = deviceId;
                   a.details = JSON.stringify({
                     date: new Date().toISOString().split('T')[0],
                     revenue: summary.totalRevenue,
@@ -155,7 +157,7 @@ export default function EndOfDayScreen() {
         a.entityType = 'system';
         a.entityId = '';
         a.staffId = currentStaff!.id;
-        a.deviceId = '';
+        a.deviceId = deviceId;
         a.details = JSON.stringify({
           date: new Date().toISOString().split('T')[0],
           revenue: summary.totalRevenue,

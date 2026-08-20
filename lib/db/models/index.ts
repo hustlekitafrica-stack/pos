@@ -14,3 +14,4 @@ export { default as ExpenseCategory } from './ExpenseCategory';
 export { default as Expense } from './Expense';
 export { default as Shift } from './Shift';
 export { default as AuditLog } from './AuditLog';
+export { default as Settings } from './Settings';

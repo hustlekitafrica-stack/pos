@@ -1,10 +1,12 @@
 import { useState, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, RefreshControl } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { Q } from '@nozbe/watermelondb';
 import { database } from '@/lib/db';
 import { Order as OrderModel, RestaurantTable as TableModel, Staff as StaffModel } from '@/lib/db/models';
+import { getPendingShifts } from '@/lib/db/actions';
 import { formatKES } from '@/utils/currency';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -39,7 +41,17 @@ export default function OrdersScreen() {
   const [showAll, setShowAll] = useState(false);
 
   const currentStaff = useAuthStore((s) => s.currentStaff);
+  const currentShiftId = useAuthStore((s) => s.currentShiftId);
+  const can = useAuthStore((s) => s.can);
+  const canViewAll = can('viewAllOrders');
   const isAdminOrManager = currentStaff?.role === 'admin' || currentStaff?.role === 'manager';
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useFocusEffect(useCallback(() => {
+    if (can('approveShiftClosure')) {
+      getPendingShifts().then((list) => setPendingCount(list.length)).catch(() => {});
+    }
+  }, [can]));
 
   // Build a staff name cache once per load
   const loadStaffNames = async (): Promise<Record<string, string>> => {
@@ -50,21 +62,35 @@ export default function OrdersScreen() {
   };
 
   const loadOrders = useCallback(async () => {
-    const fetchAll = isAdminOrManager && showAll;
+    const fetchAll = canViewAll && showAll;
 
-    const rawOrders = await database
-      .get<OrderModel>('orders')
-      .query(
-        fetchAll
-          ? Q.sortBy('opened_at', Q.desc)
-          : Q.where('status', Q.notIn(['paid', 'closed', 'voided']))
-      )
-      .fetch();
+    let rawOrders: OrderModel[];
+    if (fetchAll) {
+      // History: all paid/closed/voided — newest first
+      rawOrders = await database
+        .get<OrderModel>('orders')
+        .query(Q.sortBy('opened_at', Q.desc))
+        .fetch();
+    } else if (canViewAll) {
+      // Active view for privileged roles: all active orders, oldest first
+      rawOrders = await database
+        .get<OrderModel>('orders')
+        .query(Q.where('status', Q.notIn(['paid', 'closed', 'voided'])), Q.sortBy('opened_at', Q.asc))
+        .fetch();
+    } else {
+      // Waiter: only their own active orders
+      rawOrders = await database
+        .get<OrderModel>('orders')
+        .query(
+          Q.where('status', Q.notIn(['paid', 'closed', 'voided'])),
+          Q.where('staff_id', currentStaff?.id ?? ''),
+          Q.sortBy('opened_at', Q.asc)
+        )
+        .fetch();
+    }
 
-    // Active view: oldest first; history view: already newest-first
-    if (!fetchAll) rawOrders.sort((a, b) => a.openedAt.getTime() - b.openedAt.getTime());
-
-    const staffNames = fetchAll ? await loadStaffNames() : {};
+    // Always load staff names for privileged roles so cards can show attribution
+    const staffNames = canViewAll ? await loadStaffNames() : {};
 
     const results: OrderCard[] = [];
     for (const order of rawOrders) {
@@ -84,11 +110,11 @@ export default function OrdersScreen() {
         tableName,
         itemCount: orderItems.length,
         elapsed: getElapsed(order.openedAt),
-        staffName: fetchAll ? (staffNames[order.staffId] ?? 'Unknown') : undefined,
+        staffName: canViewAll ? (staffNames[order.staffId] ?? 'Unknown') : undefined,
       });
     }
     setCards(results);
-  }, [isAdminOrManager, showAll]);
+  }, [canViewAll, showAll, currentStaff?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -108,14 +134,14 @@ export default function OrdersScreen() {
   return (
     <SafeAreaView className="flex-1 bg-surface">
       <View className="flex-row items-center justify-between px-4 pt-3 pb-2">
-        <TouchableOpacity onPress={() => router.back()} className="w-16">
-          <Text className="text-primary text-lg">← Home</Text>
+        <TouchableOpacity onPress={() => router.back()} style={{ padding: 6 }}>
+          <Feather name="arrow-left" size={22} color="#4338CA" />
         </TouchableOpacity>
         <Text className="text-xl font-bold text-primary">
-          {isAdminOrManager && showAll ? 'All Orders' : 'Active Orders'}
+          {canViewAll && showAll ? 'All Orders' : 'Active Orders'}
         </Text>
         <View className="w-16 items-end">
-          {isAdminOrManager && (
+          {canViewAll && (
             <TouchableOpacity
               onPress={() => setShowAll((v) => !v)}
               className={`px-2 py-1 rounded-lg ${showAll ? 'bg-primary' : 'bg-gray-200'}`}
@@ -155,7 +181,10 @@ export default function OrdersScreen() {
                       <Text className="text-sm text-gray-500 mt-0.5">{order.roomNumber}</Text>
                     ) : null}
                     {staffName ? (
-                      <Text className="text-xs text-gray-400 mt-0.5">by {staffName}</Text>
+                      <View className="flex-row items-center mt-1">
+                        <Feather name="user" size={11} color="#6366f1" style={{ marginRight: 3 }} />
+                        <Text className="text-xs font-semibold" style={{ color: '#6366f1' }}>{staffName}</Text>
+                      </View>
                     ) : null}
                   </View>
                   <View className={`px-3 py-1 rounded-full ${s.bg}`}>
@@ -176,6 +205,33 @@ export default function OrdersScreen() {
         )}
         <View className="h-8" />
       </ScrollView>
+
+      {/* Footer: pending approvals badge + close shift */}
+      {(can('approveShiftClosure') || (can('closeShift') && currentShiftId) || (can('requestShiftClosure') && currentShiftId)) && (
+        <View className="px-4 pb-4 pt-2 border-t border-gray-100 bg-white">
+          {can('approveShiftClosure') && pendingCount > 0 && (
+            <TouchableOpacity
+              onPress={() => router.push('/shift/pending' as any)}
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#fef3c7', borderRadius: 12, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: '#fbbf24' }}
+            >
+              <Feather name="bell" size={14} color="#d97706" style={{ marginRight: 6 }} />
+              <Text style={{ color: '#92400e', fontWeight: '700', fontSize: 13 }}>
+                {pendingCount} Shift{pendingCount !== 1 ? 's' : ''} Pending Approval
+              </Text>
+              <Feather name="chevron-right" size={14} color="#d97706" style={{ marginLeft: 4 }} />
+            </TouchableOpacity>
+          )}
+          {(can('closeShift') || can('requestShiftClosure')) && currentShiftId && (
+            <TouchableOpacity
+              className="bg-red-700 p-3 rounded-xl items-center flex-row justify-center"
+              onPress={() => router.push('/shift/close')}
+            >
+              <Feather name="x-circle" size={16} color="#fff" style={{ marginRight: 6 }} />
+              <Text className="text-white font-bold">{can('approveShiftClosure') ? 'Close Shift' : 'End My Shift'}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
     </SafeAreaView>
   );
 }

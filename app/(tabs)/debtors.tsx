@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, Modal, TextInput, Alert, ActivityIndicator } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, router } from 'expo-router';
 import { database } from '@/lib/db';
@@ -115,12 +116,14 @@ export default function DebtorsScreen() {
   return (
     <SafeAreaView className="flex-1 bg-surface">
       <View className="flex-row items-center justify-between px-4 pt-3 pb-1">
-        <View>
-          <TouchableOpacity onPress={() => router.back()} className="mb-0.5">
-            <Text className="text-primary text-lg">← Home</Text>
+        <View className="flex-row items-center flex-1">
+          <TouchableOpacity onPress={() => router.back()} style={{ padding: 6, marginRight: 8 }}>
+            <Feather name="arrow-left" size={22} color="#4338CA" />
           </TouchableOpacity>
-          <Text className="text-xl font-bold text-primary">Credit Customers</Text>
-          <Text className="text-sm text-gray-500">Total outstanding: {formatKES(totalOwed)}</Text>
+          <View>
+            <Text className="text-xl font-bold text-primary">Credit Customers</Text>
+            <Text className="text-sm text-gray-500">Total outstanding: {formatKES(totalOwed)}</Text>
+          </View>
         </View>
         <TouchableOpacity className="bg-primary px-4 py-2 rounded-lg" onPress={() => setShowAdd(true)}>
           <Text className="text-white font-medium">+ Customer</Text>
@@ -285,30 +288,70 @@ export default function DebtorsScreen() {
           <View className="flex-row items-center justify-between p-4 bg-primary">
             <Text className="text-white text-lg font-bold">{showDetail?.name}</Text>
             <TouchableOpacity onPress={() => setShowDetail(null)}>
-              <Text className="text-white text-lg">Close</Text>
+              <Feather name="x" size={22} color="#fff" />
             </TouchableOpacity>
           </View>
           <ScrollView className="flex-1 p-4">
             {detailTxns.length === 0 ? (
               <Text className="text-gray-400 text-center mt-8">No transactions yet.</Text>
-            ) : (
-              detailTxns.map((txn) => (
-                <View key={txn.id} className="bg-white rounded-xl p-3 mb-2 flex-row justify-between border border-gray-100">
-                  <View>
-                    <Text className="text-sm font-medium text-primary">
-                      {txn.type === 'credit_sale' ? 'Credit Sale' : 'Repayment'}
-                    </Text>
-                    <Text className="text-xs text-gray-400">
-                      {txn.createdAt ? new Date(txn.createdAt).toLocaleDateString() : ''}
-                    </Text>
-                    {txn.mpesaRef ? <Text className="text-xs text-gray-500">Ref: {txn.mpesaRef}</Text> : null}
+            ) : (() => {
+              // Group transactions by date
+              const groups: Record<string, CreditTransaction[]> = {};
+              for (const txn of detailTxns) {
+                const d = txn.createdAt ? new Date(txn.createdAt) : new Date();
+                const key = d.toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' });
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(txn);
+              }
+              return Object.entries(groups).map(([dateLabel, txns]) => {
+                const dayTotal = txns.reduce((s, t) => s + (t.type === 'credit_sale' ? t.amount : -t.amount), 0);
+                const printDay = () => {
+                  const lines = [
+                    `=== ${showDetail?.name} ===`,
+                    dateLabel,
+                    '─'.repeat(32),
+                    ...txns.map((t) => `${t.type === 'credit_sale' ? 'Sale' : 'Repayment'}  ${formatKES(t.amount)}`),
+                    '─'.repeat(32),
+                    `Day Total: ${formatKES(dayTotal)}`,
+                    '',
+                  ].join('\n');
+                  const { sendToPrinter } = require('@/lib/printer/connection');
+                  sendToPrinter('bar', new TextEncoder().encode(lines)).catch(() => {});
+                };
+                return (
+                  <View key={dateLabel} className="mb-4">
+                    <View className="flex-row items-center justify-between mb-2">
+                      <Text className="text-sm font-bold text-primary">{dateLabel}</Text>
+                      <TouchableOpacity
+                        className="flex-row items-center bg-indigo-50 px-3 py-1 rounded-lg"
+                        onPress={printDay}
+                      >
+                        <Feather name="printer" size={13} color="#4338CA" style={{ marginRight: 4 }} />
+                        <Text className="text-xs text-primary font-medium">Print</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {txns.map((txn) => (
+                      <View key={txn.id} className="bg-white rounded-xl p-3 mb-1 flex-row justify-between border border-gray-100">
+                        <View>
+                          <Text className="text-sm font-medium text-primary">
+                            {txn.type === 'credit_sale' ? 'Credit Sale' : 'Repayment'}
+                          </Text>
+                          {txn.mpesaRef ? <Text className="text-xs text-gray-500">Ref: {txn.mpesaRef}</Text> : null}
+                        </View>
+                        <Text className={`text-base font-bold ${txn.type === 'credit_sale' ? 'text-red-600' : 'text-green-600'}`}>
+                          {txn.type === 'credit_sale' ? '+' : '-'}{formatKES(txn.amount)}
+                        </Text>
+                      </View>
+                    ))}
+                    <View className="flex-row justify-end px-2">
+                      <Text className="text-xs text-gray-500 font-medium">
+                        Day total: <Text className={dayTotal >= 0 ? 'text-red-600' : 'text-green-600'}>{formatKES(Math.abs(dayTotal))}</Text>
+                      </Text>
+                    </View>
                   </View>
-                  <Text className={`text-base font-bold ${txn.type === 'credit_sale' ? 'text-red-600' : 'text-green-600'}`}>
-                    {txn.type === 'credit_sale' ? '+' : '-'}{formatKES(txn.amount)}
-                  </Text>
-                </View>
-              ))
-            )}
+                );
+              });
+            })()}
           </ScrollView>
         </SafeAreaView>
       </Modal>

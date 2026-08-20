@@ -58,26 +58,33 @@ export interface SalesReport {
 export async function getSalesReport(period: Period, customStart?: Date, customEnd?: Date): Promise<SalesReport> {
   const [from, to] = getDateRange(period, customStart, customEnd);
 
-  const orders = await database.get<Order>('orders')
+  // ── Drive the report entirely from payment records ──────────────────────────
+  // This ensures revenue always equals the sum of payment methods with no drift.
+  const payments = await database.get<Payment>('payments')
     .query(
-      Q.where('status', Q.oneOf(['paid', 'closed'])),
-      Q.where('opened_at', Q.gte(from.getTime())),
-      Q.where('opened_at', Q.lte(to.getTime()))
+      Q.where('paid_at', Q.gte(from.getTime())),
+      Q.where('paid_at', Q.lte(to.getTime()))
     ).fetch();
 
-  const orderIds = orders.map((o) => o.id);
-  let payments: Payment[] = [];
+  // Derive unique order IDs touched by these payments
+  const orderIdSet = new Set(payments.map((p) => p.orderId));
+  const orderIds = Array.from(orderIdSet);
+
+  // Fetch the corresponding orders (for discounts, credit flag, item breakdown)
+  let orders: Order[] = [];
   if (orderIds.length > 0) {
-    payments = await database.get<Payment>('payments')
-      .query(Q.where('order_id', Q.oneOf(orderIds))).fetch();
+    orders = await database.get<Order>('orders')
+      .query(Q.where('id', Q.oneOf(orderIds))).fetch();
   }
 
-  const totalRevenue = orders.reduce((s, o) => s + o.totalAmount, 0);
-  const totalOrders = orders.length;
+  // Revenue = actual money received (sum of payments, not order.totalAmount)
+  const totalRevenue = payments.reduce((s, p) => s + p.amount, 0);
+  const totalOrders = orderIds.length;
   const avgOrderValue = totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0;
   const totalDiscounts = orders.reduce((s, o) => s + (o.discountAmount || 0), 0);
   const creditOrders = orders.filter((o) => o.isCredit).length;
 
+  // Payment breakdown directly from payment records → always matches totalRevenue
   const paymentBreakdown: Record<string, number> = {};
   for (const p of payments) {
     paymentBreakdown[p.method] = (paymentBreakdown[p.method] || 0) + p.amount;
@@ -150,12 +157,13 @@ export async function getSalesReport(period: Period, customStart?: Date, customE
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 10);
 
-  const dailyMap: Record<string, { revenue: number; orders: number }> = {};
-  for (const o of orders) {
-    const dateKey = new Date(o.openedAt).toISOString().split('T')[0];
-    if (!dailyMap[dateKey]) dailyMap[dateKey] = { revenue: 0, orders: 0 };
-    dailyMap[dateKey].revenue += o.totalAmount;
-    dailyMap[dateKey].orders += 1;
+  // Daily totals keyed by payment date (not order open/close date)
+  const dailyMap: Record<string, { revenue: number; orders: Set<string> }> = {};
+  for (const p of payments) {
+    const dateKey = new Date(p.paidAt).toISOString().split('T')[0];
+    if (!dailyMap[dateKey]) dailyMap[dateKey] = { revenue: 0, orders: new Set() };
+    dailyMap[dateKey].revenue += p.amount;
+    dailyMap[dateKey].orders.add(p.orderId);
   }
 
   return {
@@ -165,7 +173,7 @@ export async function getSalesReport(period: Period, customStart?: Date, customE
     paymentBreakdown,
     categoryBreakdown: Object.values(catMap).sort((a, b) => b.revenue - a.revenue),
     topProducts,
-    dailyTotals: Object.entries(dailyMap).map(([date, d]) => ({ date, ...d })).sort((a, b) => a.date.localeCompare(b.date)),
+    dailyTotals: Object.entries(dailyMap).map(([date, d]) => ({ date, revenue: d.revenue, orders: d.orders.size })).sort((a, b) => a.date.localeCompare(b.date)),
   };
 }
 
