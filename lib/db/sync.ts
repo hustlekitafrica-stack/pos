@@ -74,6 +74,65 @@ function fromSupabase(records: any[]): any[] {
   });
 }
 
+export type TablePushResult = {
+  table: string;
+  count: number;
+  ok: boolean;
+  error?: string;
+};
+
+/**
+ * Direct push: reads EVERY record from every local WatermelonDB table and
+ * upserts it to Supabase. Does NOT use WatermelonDB's sync protocol — it is
+ * completely independent so it always retries everything regardless of prior
+ * sync state. Returns a per-table result list with counts and any error text.
+ */
+export async function pushAllToSupabase(): Promise<TablePushResult[]> {
+  if (!SUPABASE_CONFIG.url || !SUPABASE_CONFIG.anonKey) {
+    return [{ table: 'connection', count: 0, ok: false, error: 'Supabase URL / key not configured in .env' }];
+  }
+
+  // Quick connectivity check before doing anything
+  const { error: pingErr } = await supabase.from('staff').select('id').limit(1);
+  if (pingErr) {
+    return [{ table: 'connection', count: 0, ok: false, error: `Cannot reach Supabase: ${pingErr.message}` }];
+  }
+
+  const results: TablePushResult[] = [];
+
+  for (const table of SYNC_TABLES) {
+    try {
+      const collection = (database as any).get(table);
+      const records = await collection.query().fetch();
+
+      if (records.length === 0) {
+        results.push({ table, count: 0, ok: true });
+        continue;
+      }
+
+      // Access raw SQLite row, strip WatermelonDB internals, convert timestamps
+      const rawRecords = toSupabase(
+        records.map((r: any) => {
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { _status, _changed, ...raw } = r._raw as any;
+          return raw;
+        })
+      );
+
+      const { error } = await supabase.from(table).upsert(rawRecords, { onConflict: 'id' });
+      if (error) {
+        results.push({ table, count: rawRecords.length, ok: false, error: error.message });
+      } else {
+        results.push({ table, count: rawRecords.length, ok: true });
+      }
+    } catch (e: any) {
+      results.push({ table, count: 0, ok: false, error: e?.message ?? String(e) });
+    }
+  }
+
+  return results;
+}
+
 /**
  * Sync local WatermelonDB with Supabase.
  * Skips silently if Supabase is not configured or offline.

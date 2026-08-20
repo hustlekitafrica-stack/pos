@@ -14,6 +14,13 @@ export async function findStaffByPin(enteredPin: string): Promise<Staff | null> 
   return null;
 }
 
+export async function deleteStaff(id: string): Promise<void> {
+  await database.write(async () => {
+    const staff = await database.get<Staff>('staff').find(id);
+    await staff.destroyPermanently();
+  });
+}
+
 // ─── Categories ─────────────────────────────────────────────────────────────
 
 export async function getAllCategories(): Promise<Category[]> {
@@ -36,6 +43,17 @@ export async function updateCategory(id: string, name: string, prepStation: stri
       c.name = name;
       c.prepStation = prepStation;
     });
+  });
+}
+
+export async function deleteCategory(id: string): Promise<void> {
+  await database.write(async () => {
+    const products = await database.get<Product>('products').query(Q.where('category_id', id)).fetch();
+    for (const p of products) {
+      await p.destroyPermanently();
+    }
+    const cat = await database.get<Category>('categories').find(id);
+    await cat.destroyPermanently();
   });
 }
 

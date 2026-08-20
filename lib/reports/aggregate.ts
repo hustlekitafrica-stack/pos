@@ -238,8 +238,8 @@ export interface ShiftReport {
   paymentBreakdown: Record<string, number>;
 }
 
-export async function getShiftReports(period: Period, staffId?: string): Promise<ShiftReport[]> {
-  const [from, to] = getDateRange(period);
+export async function getShiftReports(period: Period, staffId?: string, customStart?: Date, customEnd?: Date): Promise<ShiftReport[]> {
+  const [from, to] = getDateRange(period, customStart, customEnd);
 
   const query: any[] = [
     Q.where('opened_at', Q.gte(from.getTime())),

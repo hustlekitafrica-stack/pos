@@ -9,6 +9,7 @@ import {
   getAllCategories,
   createCategory,
   updateCategory,
+  deleteCategory,
   getProductsByCategory,
   createProduct,
   updateProduct,
@@ -85,6 +86,27 @@ export default function MenuScreen() {
     }
     setShowCatModal(false);
     await loadData();
+  };
+
+  const handleDeleteCategory = (cat: Category, productCount: number) => {
+    const msg = productCount > 0
+      ? `Delete "${cat.name}" and its ${productCount} product(s)? This cannot be undone.`
+      : `Delete "${cat.name}"? This cannot be undone.`;
+    Alert.alert('Delete Category', msg, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteCategory(cat.id);
+            await loadData();
+          } catch (e) {
+            Alert.alert('Error', 'Could not delete category.');
+          }
+        },
+      },
+    ]);
   };
 
   // ── Product CRUD ───────────────────────────────────────────────────────────
@@ -193,21 +215,29 @@ export default function MenuScreen() {
         <ScrollView className="flex-1 p-4">
           {sections.map(({ category, products }) => (
             <View key={category.id} className="mb-4">
-              {/* Category header — long-press to edit */}
-              <TouchableOpacity
-                onLongPress={() => openEditCategory(category)}
-                className="flex-row items-center mb-2"
-                activeOpacity={0.7}
-              >
-                <Text
-                  className="text-sm font-bold text-gray-500 uppercase tracking-wide mr-2"
-                  numberOfLines={1}
+              {/* Category header */}
+              <View className="flex-row items-center mb-2">
+                <TouchableOpacity
+                  onLongPress={() => openEditCategory(category)}
+                  className="flex-row items-center flex-1"
+                  activeOpacity={0.7}
                 >
-                  {category.name}
-                </Text>
-                <View className="flex-1 h-px bg-gray-200" />
-                <Text className="text-xs text-gray-300 ml-2">hold to edit</Text>
-              </TouchableOpacity>
+                  <Text
+                    className="text-sm font-bold text-gray-500 uppercase tracking-wide mr-2"
+                    numberOfLines={1}
+                  >
+                    {category.name}
+                  </Text>
+                  <View className="flex-1 h-px bg-gray-200" />
+                  <Text className="text-xs text-gray-300 ml-2 mr-2">hold to edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => handleDeleteCategory(category, products.length)}
+                  className="p-1"
+                >
+                  <Feather name="trash-2" size={14} color="#dc2626" />
+                </TouchableOpacity>
+              </View>
 
               {products.length === 0 ? (
                 <Text className="text-gray-400 text-xs ml-1">No products — tap "+ Product" to add one.</Text>

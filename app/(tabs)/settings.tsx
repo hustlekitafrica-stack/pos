@@ -19,15 +19,28 @@ import {
   disconnectKitchenPrinter,
   type PrinterDevice,
 } from '@/lib/printer/connection';
-import { syncDatabase } from '@/lib/db/sync';
+import { pushAllToSupabase, type TablePushResult } from '@/lib/db/sync';
 import { seedDatabase } from '@/lib/db/seed';
+import { deleteStaff } from '@/lib/db/actions';
 import { Role } from '@/types';
 import { hashPin } from '@/lib/auth/pin';
+
+type TabId = 'setup' | 'staff' | 'printers' | 'system';
+
+const TABS: { id: TabId; label: string; icon: string }[] = [
+  { id: 'setup',    label: 'Setup',    icon: 'settings' },
+  { id: 'staff',    label: 'Staff',    icon: 'users' },
+  { id: 'printers', label: 'Printers', icon: 'printer' },
+  { id: 'system',   label: 'System',   icon: 'tool' },
+];
 
 export default function SettingsScreen() {
   const currentStaff = useAuthStore((s) => s.currentStaff);
   const can = useAuthStore((s) => s.can);
   const logout = useAuthStore((s) => s.logout);
+
+  // Active tab
+  const [activeTab, setActiveTab] = useState<TabId>('setup');
 
   // Staff management
   const [staffList, setStaffList] = useState<Staff[]>([]);
@@ -47,6 +60,7 @@ export default function SettingsScreen() {
 
   // Sync
   const [syncing, setSyncing] = useState(false);
+  const [syncResults, setSyncResults] = useState<TablePushResult[] | null>(null);
 
   // Settings store (logo + alert email)
   const logoUri = useSettingsStore((s) => s.logoUri);
@@ -101,27 +115,33 @@ export default function SettingsScreen() {
 
   const handleAddStaff = async () => {
     if (!staffName.trim() || !staffPin.trim()) return;
-    if (staffPin.length < 4) {
-      Alert.alert('Invalid PIN', 'PIN must be at least 4 digits');
+    if (staffPin.length !== 4) {
+      Alert.alert('Invalid PIN', 'PIN must be exactly 4 digits');
       return;
     }
 
-    const hashedPin = await hashPin(staffPin);
-    await database.write(async () => {
-      await database.get<Staff>('staff').create((s) => {
-        s.name = staffName.trim();
-        s.pin = hashedPin;
-        s.role = staffRole;
-        s.isActive = true;
+    try {
+      const hashedPin = await hashPin(staffPin);
+      await database.write(async () => {
+        await database.get<Staff>('staff').create((s) => {
+          s.name = staffName.trim();
+          s.pin = hashedPin;
+          s.role = staffRole;
+          s.phone = '';
+          s.isActive = true;
+        });
       });
-    });
 
-    setStaffName('');
-    setStaffPin('');
-    setStaffRole('cashier');
-    setShowAddStaff(false);
-    Alert.alert('Staff Added', `${staffName} (${staffRole})`);
-    await loadStaff();
+      setStaffName('');
+      setStaffPin('');
+      setStaffRole('cashier');
+      setShowAddStaff(false);
+      Alert.alert('Staff Added', `${staffName} (${staffRole})`);
+      await loadStaff();
+      pushAllToSupabase().catch(() => {});
+    } catch (e) {
+      Alert.alert('Error', 'Could not add staff. Please try again.');
+    }
   };
 
   const handleToggleStaff = async (staff: Staff) => {
@@ -133,6 +153,32 @@ export default function SettingsScreen() {
       await staff.update((s) => { s.isActive = !s.isActive; });
     });
     await loadStaff();
+  };
+
+  const handleDeleteStaff = (staff: Staff) => {
+    if (staff.id === currentStaff?.id) {
+      Alert.alert('Cannot Delete', 'You cannot delete your own account.');
+      return;
+    }
+    Alert.alert(
+      'Delete Staff',
+      `Permanently delete ${staff.name}? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteStaff(staff.id);
+              await loadStaff();
+            } catch (e) {
+              Alert.alert('Error', 'Could not delete staff member.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleScanPrinters = async (target: 'bar' | 'kitchen') => {
@@ -160,12 +206,9 @@ export default function SettingsScreen() {
 
   const handleSync = async () => {
     setSyncing(true);
-    try {
-      await syncDatabase();
-      Alert.alert('Sync Complete', 'Data synchronized with server');
-    } catch (e: any) {
-      Alert.alert('Sync Failed', e?.message || 'Could not connect to server');
-    }
+    setSyncResults(null);
+    const results = await pushAllToSupabase();
+    setSyncResults(results);
     setSyncing(false);
   };
 
@@ -194,170 +237,298 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-surface">
+      {/* ── Header ───────────────────────────────────────────────────── */}
       <View className="px-4 pt-3 pb-1">
-        <View className="flex-row items-center mb-2">
+        <View className="flex-row items-center mb-1">
           <TouchableOpacity onPress={() => router.back()} style={{ padding: 6, marginRight: 8 }}>
             <Feather name="arrow-left" size={22} color="#4338CA" />
           </TouchableOpacity>
           <Text className="text-xl font-bold text-primary">Settings</Text>
         </View>
-        <Text className="text-xs text-gray-500">Logged in as: {currentStaff?.name} ({currentStaff?.role})</Text>
+        <Text className="text-xs text-gray-500 ml-10">
+          Logged in as: {currentStaff?.name} ({currentStaff?.role})
+        </Text>
       </View>
 
+      {/* ── Tab Bar ──────────────────────────────────────────────────── */}
+      <View className="bg-white border-b border-gray-100">
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8 }}>
+          {TABS.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <TouchableOpacity
+                key={tab.id}
+                onPress={() => setActiveTab(tab.id)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  paddingHorizontal: 16,
+                  paddingVertical: 8,
+                  marginRight: 8,
+                  borderRadius: 20,
+                  backgroundColor: isActive ? '#3730A3' : '#f1f5f9',
+                }}
+              >
+                <Feather
+                  name={tab.icon as any}
+                  size={14}
+                  color={isActive ? '#ffffff' : '#64748b'}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={{ fontSize: 13, fontWeight: '600', color: isActive ? '#ffffff' : '#64748b' }}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
+      {/* ── Tab Content ──────────────────────────────────────────────── */}
       <ScrollView className="flex-1 p-4">
-        {/* ── Logo ─────────────────────────────────────────────────────── */}
-        {can('manageStaff') && (
-          <View className="bg-white rounded-xl p-4 mb-4 border border-gray-100">
-            <Text className="text-sm font-bold text-primary mb-3">Venue Logo</Text>
-            <View className="flex-row items-center">
-              {logoUri ? (
-                <Image source={{ uri: logoUri }} style={{ width: 60, height: 60, borderRadius: 8, marginRight: 12 }} resizeMode="contain" />
-              ) : (
-                <View style={{ width: 60, height: 60, borderRadius: 8, backgroundColor: '#f1f5f9', marginRight: 12, alignItems: 'center', justifyContent: 'center' }}>
-                  <Feather name="image" size={24} color="#94a3b8" />
+
+        {/* ════════════════════════════════════════════════════════════ */}
+        {/* SETUP TAB                                                    */}
+        {/* ════════════════════════════════════════════════════════════ */}
+        {activeTab === 'setup' && (
+          <>
+            {can('manageStaff') ? (
+              <>
+                {/* Venue Logo */}
+                <View className="bg-white rounded-xl p-4 mb-4 border border-gray-100">
+                  <Text className="text-sm font-bold text-primary mb-3">Venue Logo</Text>
+                  <View className="flex-row items-center">
+                    {logoUri ? (
+                      <Image source={{ uri: logoUri }} style={{ width: 60, height: 60, borderRadius: 8, marginRight: 12 }} resizeMode="contain" />
+                    ) : (
+                      <View style={{ width: 60, height: 60, borderRadius: 8, backgroundColor: '#f1f5f9', marginRight: 12, alignItems: 'center', justifyContent: 'center' }}>
+                        <Feather name="image" size={24} color="#94a3b8" />
+                      </View>
+                    )}
+                    <View className="flex-1">
+                      <TouchableOpacity className="bg-primary px-4 py-2 rounded-lg mb-2" onPress={handlePickLogo}>
+                        <Text className="text-white text-sm font-medium">{logoUri ? 'Change Logo' : 'Upload Logo'}</Text>
+                      </TouchableOpacity>
+                      {logoUri && (
+                        <TouchableOpacity onPress={() => setLogoUri(null)}>
+                          <Text className="text-red-500 text-xs">Remove logo</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
                 </View>
-              )}
-              <View className="flex-1">
-                <TouchableOpacity className="bg-primary px-4 py-2 rounded-lg mb-2" onPress={handlePickLogo}>
-                  <Text className="text-white text-sm font-medium">{logoUri ? 'Change Logo' : 'Upload Logo'}</Text>
-                </TouchableOpacity>
-                {logoUri && (
-                  <TouchableOpacity onPress={() => setLogoUri(null)}>
-                    <Text className="text-red-500 text-xs">Remove logo</Text>
+
+                {/* Alert Email */}
+                <View className="bg-white rounded-xl p-4 mb-4 border border-gray-100">
+                  <Text className="text-sm font-bold text-primary mb-1">Low-Stock Alert Email</Text>
+                  <Text className="text-xs text-gray-400 mb-3">Receives automatic email when items run low</Text>
+                  <TextInput
+                    className="border border-gray-300 rounded-xl p-3 text-base mb-3"
+                    value={emailInput}
+                    onChangeText={setEmailInput}
+                    placeholder="owner@bar.com"
+                    placeholderTextColor="#9ca3af"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
+                  <TouchableOpacity className="bg-primary px-4 py-2 rounded-lg items-center" onPress={handleSaveEmail}>
+                    <Text className="text-white text-sm font-medium">Save Email</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <View className="bg-white rounded-xl p-6 border border-gray-100 items-center">
+                <Feather name="lock" size={32} color="#94a3b8" />
+                <Text className="text-gray-400 text-sm mt-3 text-center">You don't have permission to access setup settings.</Text>
+              </View>
+            )}
+          </>
+        )}
+
+        {/* ════════════════════════════════════════════════════════════ */}
+        {/* STAFF TAB                                                    */}
+        {/* ════════════════════════════════════════════════════════════ */}
+        {activeTab === 'staff' && (
+          <>
+            {can('manageStaff') ? (
+              <>
+                <View className="flex-row items-center justify-between mb-3">
+                  <Text className="text-sm font-bold text-primary">Team Members</Text>
+                  <TouchableOpacity className="bg-primary px-3 py-1.5 rounded-lg" onPress={() => setShowAddStaff(true)}>
+                    <Text className="text-white text-xs font-medium">+ Add Staff</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {staffList.length === 0 && (
+                  <View className="bg-white rounded-xl p-6 border border-gray-100 items-center">
+                    <Feather name="users" size={32} color="#94a3b8" />
+                    <Text className="text-gray-400 text-sm mt-3">No staff members yet.</Text>
+                  </View>
+                )}
+
+                {staffList.map((staff) => (
+                  <View key={staff.id} className="bg-white rounded-xl p-4 mb-2 border border-gray-100 flex-row items-center justify-between">
+                    <View className="flex-1">
+                      <Text className={`text-sm font-medium ${staff.isActive ? 'text-primary' : 'text-gray-400'}`}>
+                        {staff.name}
+                      </Text>
+                      <Text className="text-xs text-gray-500">{staff.role}</Text>
+                    </View>
+                    <View className="flex-row items-center">
+                      <TouchableOpacity
+                        className={`px-3 py-1.5 rounded-lg mr-2 ${staff.isActive ? 'bg-red-100' : 'bg-green-100'}`}
+                        onPress={() => handleToggleStaff(staff)}
+                      >
+                        <Text className={`text-xs font-medium ${staff.isActive ? 'text-red-600' : 'text-green-600'}`}>
+                          {staff.isActive ? 'Deactivate' : 'Activate'}
+                        </Text>
+                      </TouchableOpacity>
+                      {staff.id !== currentStaff?.id && (
+                        <TouchableOpacity
+                          className="bg-red-50 p-2 rounded-lg"
+                          onPress={() => handleDeleteStaff(staff)}
+                        >
+                          <Feather name="trash-2" size={14} color="#dc2626" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                ))}
+              </>
+            ) : (
+              <View className="bg-white rounded-xl p-6 border border-gray-100 items-center">
+                <Feather name="lock" size={32} color="#94a3b8" />
+                <Text className="text-gray-400 text-sm mt-3 text-center">You don't have permission to manage staff.</Text>
+              </View>
+            )}
+          </>
+        )}
+
+        {/* ════════════════════════════════════════════════════════════ */}
+        {/* PRINTERS TAB                                                 */}
+        {/* ════════════════════════════════════════════════════════════ */}
+        {activeTab === 'printers' && (
+          <>
+            <Text className="text-xs text-gray-400 mb-3">Connect Bluetooth thermal printers for receipts and kitchen tickets.</Text>
+            <View className="bg-white rounded-xl p-4 mb-2 border border-gray-100">
+              {/* Bar Printer */}
+              <View className="flex-row items-center justify-between mb-4 pb-4 border-b border-gray-100">
+                <View>
+                  <Text className="text-sm font-medium text-gray-700">Bar Printer</Text>
+                  <Text className={`text-xs mt-0.5 ${barConnected ? 'text-green-600' : 'text-gray-400'}`}>
+                    {barConnected ? `Connected (${barAddress?.slice(0, 12)}...)` : 'Not connected'}
+                  </Text>
+                </View>
+                {barConnected ? (
+                  <TouchableOpacity className="bg-red-100 px-3 py-1.5 rounded-lg" onPress={disconnectBarPrinter}>
+                    <Text className="text-red-600 text-xs font-medium">Disconnect</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity className="bg-primary px-3 py-1.5 rounded-lg" onPress={() => handleScanPrinters('bar')}>
+                    <Text className="text-white text-xs font-medium">Scan & Connect</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* Kitchen Printer */}
+              <View className="flex-row items-center justify-between">
+                <View>
+                  <Text className="text-sm font-medium text-gray-700">Kitchen Printer</Text>
+                  <Text className={`text-xs mt-0.5 ${kitchenConnected ? 'text-green-600' : 'text-gray-400'}`}>
+                    {kitchenConnected ? `Connected (${kitchenAddress?.slice(0, 12)}...)` : 'Not connected'}
+                  </Text>
+                </View>
+                {kitchenConnected ? (
+                  <TouchableOpacity className="bg-red-100 px-3 py-1.5 rounded-lg" onPress={disconnectKitchenPrinter}>
+                    <Text className="text-red-600 text-xs font-medium">Disconnect</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity className="bg-primary px-3 py-1.5 rounded-lg" onPress={() => handleScanPrinters('kitchen')}>
+                    <Text className="text-white text-xs font-medium">Scan & Connect</Text>
                   </TouchableOpacity>
                 )}
               </View>
             </View>
-          </View>
-        )}
-
-        {/* ── Alert Email ──────────────────────────────────────────── */}
-        {can('manageStaff') && (
-          <View className="bg-white rounded-xl p-4 mb-4 border border-gray-100">
-            <Text className="text-sm font-bold text-primary mb-1">Low-Stock Alert Email</Text>
-            <Text className="text-xs text-gray-400 mb-3">Receives automatic email when items run low</Text>
-            <TextInput
-              className="border border-gray-300 rounded-xl p-3 text-base mb-3"
-              value={emailInput}
-              onChangeText={setEmailInput}
-              placeholder="owner@bar.com"
-              placeholderTextColor="#9ca3af"
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
-            <TouchableOpacity className="bg-primary px-4 py-2 rounded-lg items-center" onPress={handleSaveEmail}>
-              <Text className="text-white text-sm font-medium">Save Email</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* ── Quick Actions ────────────────────────────────────────────────── */}
-        <View className="flex-row mb-4">
-          <TouchableOpacity className="flex-1 bg-primary p-3 rounded-xl items-center mr-2" onPress={handleSync}>
-            {syncing ? <ActivityIndicator color="#fff" /> : <Text className="text-white font-medium">Sync</Text>}
-          </TouchableOpacity>
-          <TouchableOpacity className="flex-1 bg-red-600 p-3 rounded-xl items-center" onPress={logout}>
-            <Text className="text-white font-medium">Logout</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* ── Admin Links ──────────────────────────────────────── */}
-        {can('viewAuditLog') && (
-          <View className="flex-row mb-4">
-            <TouchableOpacity
-              className="flex-1 bg-gray-700 p-3 rounded-xl items-center mr-2"
-              onPress={() => router.push('/admin/audit-log')}
-            >
-              <Text className="text-white font-medium text-sm">Audit Log</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              className="flex-1 bg-gray-700 p-3 rounded-xl items-center mr-2"
-              onPress={() => router.push('/admin/end-of-day')}
-            >
-              <Text className="text-white font-medium text-sm">End of Day</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              className="flex-1 bg-gray-500 p-3 rounded-xl items-center"
-              onPress={handleSeed}
-            >
-              <Text className="text-white font-medium text-sm">Seed Data</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* ── Printers ─────────────────────────────────────────── */}
-        <Text className="text-sm font-bold text-primary mb-2 mt-2">Printers</Text>
-        <View className="bg-white rounded-xl p-4 mb-2 border border-gray-100">
-          <View className="flex-row items-center justify-between mb-3">
-            <View>
-              <Text className="text-sm font-medium text-gray-700">Bar Printer</Text>
-              <Text className={`text-xs ${barConnected ? 'text-green-600' : 'text-gray-400'}`}>
-                {barConnected ? `Connected (${barAddress?.slice(0, 12)}...)` : 'Not connected'}
-              </Text>
-            </View>
-            {barConnected ? (
-              <TouchableOpacity className="bg-red-100 px-3 py-1.5 rounded-lg" onPress={disconnectBarPrinter}>
-                <Text className="text-red-600 text-xs font-medium">Disconnect</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity className="bg-primary px-3 py-1.5 rounded-lg" onPress={() => handleScanPrinters('bar')}>
-                <Text className="text-white text-xs font-medium">Scan & Connect</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <View className="flex-row items-center justify-between">
-            <View>
-              <Text className="text-sm font-medium text-gray-700">Kitchen Printer</Text>
-              <Text className={`text-xs ${kitchenConnected ? 'text-green-600' : 'text-gray-400'}`}>
-                {kitchenConnected ? `Connected (${kitchenAddress?.slice(0, 12)}...)` : 'Not connected'}
-              </Text>
-            </View>
-            {kitchenConnected ? (
-              <TouchableOpacity className="bg-red-100 px-3 py-1.5 rounded-lg" onPress={disconnectKitchenPrinter}>
-                <Text className="text-red-600 text-xs font-medium">Disconnect</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity className="bg-primary px-3 py-1.5 rounded-lg" onPress={() => handleScanPrinters('kitchen')}>
-                <Text className="text-white text-xs font-medium">Scan & Connect</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-
-        {/* ── Staff Management ─────────────────────────────────── */}
-        {can('manageStaff') && (
-          <>
-            <View className="flex-row items-center justify-between mt-4 mb-2">
-              <Text className="text-sm font-bold text-primary">Staff</Text>
-              <TouchableOpacity className="bg-primary px-3 py-1.5 rounded-lg" onPress={() => setShowAddStaff(true)}>
-                <Text className="text-white text-xs font-medium">+ Add</Text>
-              </TouchableOpacity>
-            </View>
-
-            {staffList.map((staff) => (
-              <View key={staff.id} className="bg-white rounded-xl p-4 mb-2 border border-gray-100 flex-row items-center justify-between">
-                <View>
-                  <Text className={`text-sm font-medium ${staff.isActive ? 'text-primary' : 'text-gray-400'}`}>
-                    {staff.name}
-                  </Text>
-                  <Text className="text-xs text-gray-500">{staff.role}</Text>
-                </View>
-                <TouchableOpacity
-                  className={`px-3 py-1.5 rounded-lg ${staff.isActive ? 'bg-red-100' : 'bg-green-100'}`}
-                  onPress={() => handleToggleStaff(staff)}
-                >
-                  <Text className={`text-xs font-medium ${staff.isActive ? 'text-red-600' : 'text-green-600'}`}>
-                    {staff.isActive ? 'Deactivate' : 'Activate'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            ))}
           </>
         )}
+
+        {/* ════════════════════════════════════════════════════════════ */}
+        {/* SYSTEM TAB                                                   */}
+        {/* ════════════════════════════════════════════════════════════ */}
+        {activeTab === 'system' && (
+          <>
+            {/* Sync */}
+            <View className="bg-white rounded-xl p-4 mb-4 border border-gray-100">
+              <Text className="text-sm font-bold text-primary mb-3">Cloud Sync</Text>
+              <TouchableOpacity
+                className="bg-primary p-3 rounded-xl items-center"
+                onPress={handleSync}
+                disabled={syncing}
+              >
+                {syncing
+                  ? <ActivityIndicator color="#fff" />
+                  : <Text className="text-white font-medium">Sync to Cloud</Text>
+                }
+              </TouchableOpacity>
+
+              {syncResults && (
+                <View className="mt-3">
+                  <Text className="text-xs font-bold text-primary mb-2">Sync Results</Text>
+                  {syncResults.map((r, i) => (
+                    <View key={i} className="flex-row items-start mb-1">
+                      <Text className={`text-xs font-medium mr-1 ${r.ok ? 'text-green-600' : 'text-red-600'}`}>
+                        {r.ok ? '✓' : '✗'}
+                      </Text>
+                      <View className="flex-1">
+                        <Text className={`text-xs ${r.ok ? 'text-gray-600' : 'text-red-700'}`}>
+                          {r.table}{r.count > 0 ? ` (${r.count})` : ''}
+                          {r.error ? `: ${r.error}` : ''}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            {/* Admin Tools */}
+            {can('viewAuditLog') && (
+              <View className="bg-white rounded-xl p-4 mb-4 border border-gray-100">
+                <Text className="text-sm font-bold text-primary mb-3">Admin Tools</Text>
+                <TouchableOpacity
+                  className="bg-gray-700 p-3 rounded-xl items-center mb-2"
+                  onPress={() => router.push('/admin/audit-log')}
+                >
+                  <Text className="text-white font-medium text-sm">Audit Log</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  className="bg-gray-700 p-3 rounded-xl items-center mb-2"
+                  onPress={() => router.push('/admin/end-of-day')}
+                >
+                  <Text className="text-white font-medium text-sm">End of Day</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  className="bg-gray-500 p-3 rounded-xl items-center"
+                  onPress={handleSeed}
+                >
+                  <Text className="text-white font-medium text-sm">Seed Data</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Logout */}
+            <View className="bg-white rounded-xl p-4 mb-4 border border-gray-100">
+              <Text className="text-sm font-bold text-primary mb-3">Account</Text>
+              <TouchableOpacity className="bg-red-600 p-3 rounded-xl items-center" onPress={logout}>
+                <Text className="text-white font-medium">Logout</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
       </ScrollView>
 
-      {/* Add Staff Modal */}
+      {/* ── Add Staff Modal ───────────────────────────────────────────── */}
       <Modal visible={showAddStaff} transparent animationType="fade">
         <View className="flex-1 bg-black/50 justify-center items-center p-8">
           <View className="bg-white rounded-2xl p-6 w-full max-w-sm">
@@ -373,7 +544,7 @@ export default function SettingsScreen() {
               autoFocus
             />
 
-            <Text className="text-sm font-medium text-gray-600 mb-1">PIN (min 4 digits)</Text>
+            <Text className="text-sm font-medium text-gray-600 mb-1">PIN (exactly 4 digits)</Text>
             <TextInput
               className="border border-gray-300 rounded-xl p-3 text-base mb-3"
               value={staffPin}
@@ -381,6 +552,7 @@ export default function SettingsScreen() {
               placeholder="0000"
               placeholderTextColor="#9ca3af"
               keyboardType="numeric"
+              maxLength={4}
               secureTextEntry
             />
 
@@ -409,7 +581,7 @@ export default function SettingsScreen() {
         </View>
       </Modal>
 
-      {/* Printer Picker Modal */}
+      {/* ── Printer Picker Modal ──────────────────────────────────────── */}
       <Modal visible={!!showPrinterPicker} transparent animationType="fade">
         <View className="flex-1 bg-black/50 justify-center items-center p-8">
           <View className="bg-white rounded-2xl p-6 w-full max-w-sm">

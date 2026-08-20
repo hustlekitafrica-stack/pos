@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, useWindowDimensions, Alert, Image } from 'react-native';
+import { View, Text, TouchableOpacity, useWindowDimensions, Alert, Image } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
@@ -195,66 +195,84 @@ export default function DashboardScreen() {
       </View>
 
       {/* Tile Grid */}
-      <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 32 }}>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-          {TILES.map((tile) => {
-            const allowed = tile.permission === null ? true : can(tile.permission as any);
-            return (
-              <TouchableOpacity
-                key={tile.id}
-                style={{
-                  width: tileSize,
-                  height: tileSize,
-                  backgroundColor: allowed ? tile.bg : '#1e1b4b',
-                  borderRadius: 20,
-                  padding: 16,
-                  justifyContent: 'space-between',
-                  borderWidth: 2,
-                  borderColor: allowed ? tile.accent + '33' : '#334155',
-                  opacity: allowed ? 1 : 0.65,
-                }}
-                onPress={() => handleTilePress(tile)}
-                activeOpacity={0.8}
-              >
-                <View className="flex-row items-start justify-between">
-                  <Feather
-                    name={tile.icon as any}
-                    size={Math.round(tileSize * 0.28)}
-                    color={allowed ? tile.accent : '#64748b'}
-                  />
-                  {!allowed && (
-                    <Feather name="lock" size={14} color="#64748b" />
-                  )}
-                </View>
-                <View>
-                  <Text
+      <View style={{ flex: 1, padding: 16 }}>
+        {(() => {
+          const rows: Tile[][] = [];
+          for (let i = 0; i < TILES.length; i += numCols) {
+            rows.push(TILES.slice(i, i + numCols));
+          }
+          return rows.map((row, rowIdx) => (
+            <View
+              key={rowIdx}
+              style={{
+                flex: 1,
+                flexDirection: 'row',
+                gap: 12,
+                marginBottom: rowIdx < rows.length - 1 ? 12 : 0,
+              }}
+            >
+              {row.map((tile) => {
+                const allowed = tile.permission === null ? true : can(tile.permission as any);
+                return (
+                  <TouchableOpacity
+                    key={tile.id}
                     style={{
-                      fontSize: tileSize < 120 ? 13 : 15,
-                      fontWeight: '700',
-                      color: allowed ? '#1e1b4b' : '#64748b',
+                      flex: 1,
+                      backgroundColor: allowed ? tile.bg : '#1e1b4b',
+                      borderRadius: 20,
+                      padding: 16,
+                      justifyContent: 'space-between',
+                      borderWidth: 2,
+                      borderColor: allowed ? tile.accent + '33' : '#334155',
+                      opacity: allowed ? 1 : 0.65,
                     }}
-                    numberOfLines={1}
+                    onPress={() => handleTilePress(tile)}
+                    activeOpacity={0.8}
                   >
-                    {tile.label}
-                  </Text>
-                  {tileSize >= 110 && (
-                    <Text
-                      style={{
-                        fontSize: 11,
-                        color: allowed ? '#64748b' : '#475569',
-                        marginTop: 2,
-                      }}
-                      numberOfLines={1}
-                    >
-                      {tile.description}
-                    </Text>
-                  )}
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </ScrollView>
+                    <View className="flex-row items-start justify-between">
+                      <Feather
+                        name={tile.icon as any}
+                        size={Math.round(tileSize * 0.28)}
+                        color={allowed ? tile.accent : '#64748b'}
+                      />
+                      {!allowed && (
+                        <Feather name="lock" size={14} color="#64748b" />
+                      )}
+                    </View>
+                    <View>
+                      <Text
+                        style={{
+                          fontSize: tileSize < 120 ? 13 : 15,
+                          fontWeight: '700',
+                          color: allowed ? '#1e1b4b' : '#64748b',
+                        }}
+                        numberOfLines={1}
+                      >
+                        {tile.label}
+                      </Text>
+                      {tileSize >= 110 && (
+                        <Text
+                          style={{
+                            fontSize: 11,
+                            color: allowed ? '#64748b' : '#475569',
+                            marginTop: 2,
+                          }}
+                          numberOfLines={1}
+                        >
+                          {tile.description}
+                        </Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+              {row.length < numCols && Array(numCols - row.length).fill(null).map((_, i) => (
+                <View key={`empty-${i}`} style={{ flex: 1 }} />
+              ))}
+            </View>
+          ));
+        })()}
+      </View>
 
     </SafeAreaView>
   );

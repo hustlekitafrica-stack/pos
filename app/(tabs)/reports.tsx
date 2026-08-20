@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Modal,
-  Alert, ActivityIndicator, Pressable,
+  Alert, ActivityIndicator, Pressable, TextInput,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -66,10 +66,20 @@ const REPORTS: ReportMeta[] = [
 ];
 
 const PERIODS: { key: Period; label: string }[] = [
-  { key: 'today', label: 'Today' },
-  { key: 'week',  label: 'Week' },
-  { key: 'month', label: 'Month' },
+  { key: 'today',  label: 'Today' },
+  { key: 'week',   label: 'Week' },
+  { key: 'month',  label: 'Month' },
+  { key: 'custom', label: 'Custom' },
 ];
+
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function parseDate(s: string): Date | null {
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
 
 // ─── Shared UI helpers ───────────────────────────────────────────────────────
 
@@ -607,6 +617,12 @@ export default function ReportsScreen() {
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Custom date range
+  const [customStartStr, setCustomStartStr] = useState(todayStr);
+  const [customEndStr, setCustomEndStr] = useState(todayStr);
+  const [customStartDate, setCustomStartDate] = useState<Date | undefined>(undefined);
+  const [customEndDate, setCustomEndDate] = useState<Date | undefined>(undefined);
+
   // Report data state
   const [salesData, setSalesData] = useState<SalesReport | null>(null);
   const [pnlData, setPnlData] = useState<ProfitLossReport | null>(null);
@@ -622,33 +638,51 @@ export default function ReportsScreen() {
   const [debtorsData, setDebtorsData] = useState<DebtorEntry[]>([]);
   const [hourlyData, setHourlyData] = useState<HourlySalesReport | null>(null);
 
-  const loadReport = useCallback(async () => {
+  const loadReport = useCallback(async (cs?: Date, ce?: Date) => {
     setLoading(true);
+    const s = cs ?? customStartDate;
+    const e = ce ?? customEndDate;
     try {
       switch (activeReport) {
-        case 'sales':      setSalesData(await getSalesReport(period)); break;
-        case 'pnl':        setPnlData(await getProfitLossReport(period)); break;
-        case 'products':   setProductData(await getProductPerformanceReport(period)); break;
-        case 'categories': setCategoryData(await getCategoryAnalysisReport(period)); break;
-        case 'payments':   setPaymentData(await getPaymentAnalysisReport(period)); break;
-        case 'staff':      setStaffData(await getStaffPerformanceReport(period)); break;
+        case 'sales':      setSalesData(await getSalesReport(period, s, e)); break;
+        case 'pnl':        setPnlData(await getProfitLossReport(period, s, e)); break;
+        case 'products':   setProductData(await getProductPerformanceReport(period, s, e)); break;
+        case 'categories': setCategoryData(await getCategoryAnalysisReport(period, s, e)); break;
+        case 'payments':   setPaymentData(await getPaymentAnalysisReport(period, s, e)); break;
+        case 'staff':      setStaffData(await getStaffPerformanceReport(period, s, e)); break;
         case 'shifts': {
           const sid = can('viewAllReports') ? undefined : currentStaff?.id;
-          setShiftData(await getShiftReports(period, sid));
+          setShiftData(await getShiftReports(period, sid, s, e));
           break;
         }
-        case 'expenses':   setExpenseData(await getExpenseReport(period)); break;
-        case 'discounts':  setDiscountsData(await getDiscountsVoidsReport(period)); break;
-        case 'stock':      setStockData(await getStockMovementReport(period)); break;
+        case 'expenses':   setExpenseData(await getExpenseReport(period, s, e)); break;
+        case 'discounts':  setDiscountsData(await getDiscountsVoidsReport(period, s, e)); break;
+        case 'stock':      setStockData(await getStockMovementReport(period, s, e)); break;
         case 'lowstock':   setLowStockData(await getLowStockItems()); break;
         case 'debtors':    setDebtorsData(await getDebtorsReport()); break;
-        case 'hourly':     setHourlyData(await getHourlySalesReport(period)); break;
+        case 'hourly':     setHourlyData(await getHourlySalesReport(period, s, e)); break;
       }
     } catch (e) {
       console.warn('Report error:', e);
     }
     setLoading(false);
-  }, [activeReport, period]);
+  }, [activeReport, period, customStartDate, customEndDate]);
+
+  const handleApplyCustom = () => {
+    const s = parseDate(customStartStr);
+    const e = parseDate(customEndStr);
+    if (!s || !e) {
+      Alert.alert('Invalid date', 'Use YYYY-MM-DD format (e.g. 2026-08-01)');
+      return;
+    }
+    if (s > e) {
+      Alert.alert('Invalid range', 'Start date must be before end date.');
+      return;
+    }
+    setCustomStartDate(s);
+    setCustomEndDate(e);
+    loadReport(s, e);
+  };
 
   useFocusEffect(useCallback(() => { loadReport(); }, [loadReport]));
 
@@ -731,16 +765,54 @@ export default function ReportsScreen() {
 
         {/* Period selector */}
         {meta.hasPeriod && (
-          <View style={{ flexDirection: 'row', marginTop: 10 }}>
-            {PERIODS.map((p) => (
-              <TouchableOpacity
-                key={p.key}
-                onPress={() => setPeriod(p.key)}
-                style={{ paddingHorizontal: 16, paddingVertical: 6, borderRadius: 20, marginRight: 8, backgroundColor: period === p.key ? '#4338CA' : '#f1f5f9' }}
-              >
-                <Text style={{ fontSize: 12, fontWeight: '600', color: period === p.key ? '#fff' : '#64748b' }}>{p.label}</Text>
-              </TouchableOpacity>
-            ))}
+          <View style={{ marginTop: 10 }}>
+            <View style={{ flexDirection: 'row' }}>
+              {PERIODS.map((p) => (
+                <TouchableOpacity
+                  key={p.key}
+                  onPress={() => setPeriod(p.key)}
+                  style={{ paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, marginRight: 8, backgroundColor: period === p.key ? '#4338CA' : '#f1f5f9' }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: period === p.key ? '#fff' : '#64748b' }}>{p.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {period === 'custom' && (
+              <View style={{ marginTop: 10, backgroundColor: '#f8fafc', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#e2e8f0' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '600', color: '#64748b', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>From</Text>
+                    <TextInput
+                      value={customStartStr}
+                      onChangeText={setCustomStartStr}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor="#cbd5e1"
+                      keyboardType="numeric"
+                      maxLength={10}
+                      style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, color: '#1e1b4b' }}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 10, fontWeight: '600', color: '#64748b', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>To</Text>
+                    <TextInput
+                      value={customEndStr}
+                      onChangeText={setCustomEndStr}
+                      placeholder="YYYY-MM-DD"
+                      placeholderTextColor="#cbd5e1"
+                      keyboardType="numeric"
+                      maxLength={10}
+                      style={{ backgroundColor: '#fff', borderWidth: 1, borderColor: '#e2e8f0', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13, color: '#1e1b4b' }}
+                    />
+                  </View>
+                </View>
+                <TouchableOpacity
+                  onPress={handleApplyCustom}
+                  style={{ backgroundColor: '#4338CA', borderRadius: 8, paddingVertical: 8, alignItems: 'center' }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Apply</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         )}
       </View>
