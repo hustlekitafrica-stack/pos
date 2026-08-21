@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert, Modal, TextInput, useWindowDimensions } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, Modal, TextInput, Platform, useWindowDimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
@@ -25,6 +25,7 @@ import {
   splitOrder,
   mergeOrders,
 } from '@/lib/db/actions';
+import { triggerAutoSync } from '@/lib/db/sync';
 
 export default function OrderScreen() {
   const { id: orderId } = useLocalSearchParams<{ id: string }>();
@@ -65,6 +66,7 @@ export default function OrderScreen() {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductModel[]>([]);
   const [productNames, setProductNames] = useState<Record<string, string>>({});
+  const [menuSearchQuery, setMenuSearchQuery] = useState('');
 
   const loadOrder = useCallback(async () => {
     if (!orderId) return;
@@ -341,6 +343,7 @@ export default function OrderScreen() {
       await tbl.update((t: any) => { t.status = 'free'; });
     });
 
+    triggerAutoSync();
     setShowCreditPicker(false);
     setShowPayment(false);
     Alert.alert('Credit Sale', `Charged to ${customer.name}'s account`);
@@ -419,6 +422,7 @@ export default function OrderScreen() {
       });
     });
     await recalculateOrderTotal(item.orderId);
+    triggerAutoSync();
     await loadOrder();
   };
 
@@ -458,6 +462,7 @@ export default function OrderScreen() {
       await tbl.update((t: any) => { t.status = 'free'; });
     });
 
+    triggerAutoSync();
     setShowRefund(false);
     setRefundReason('');
     Alert.alert('Refund Processed', 'Order voided and stock restored');
@@ -471,6 +476,7 @@ export default function OrderScreen() {
         o.roomNumber = clientId.trim() || null;
       });
     });
+    triggerAutoSync();
     setShowClientInput(false);
     await loadOrder();
   };
@@ -716,66 +722,156 @@ export default function OrderScreen() {
       </View>
 
       {/* Menu Modal */}
-      <Modal visible={showMenu} animationType="slide">
-        <SafeAreaView className="flex-1 bg-surface">
-          <View className="flex-row items-center justify-between p-4 bg-primary">
-            <Text className="text-white text-lg font-bold">Add Items</Text>
-            <TouchableOpacity onPress={() => setShowMenu(false)}>
-              <Text className="text-white text-lg">Done</Text>
+      <Modal visible={showMenu} animationType="slide" onShow={() => setMenuSearchQuery('')}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+          {/* Header */}
+          <View
+            style={{
+              backgroundColor: '#1e1b4b',
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 16,
+              paddingVertical: 12,
+            }}
+          >
+            <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700' }}>Add Items</Text>
+            <TouchableOpacity onPress={() => setShowMenu(false)} style={{ paddingHorizontal: 8, paddingVertical: 4 }}>
+              <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>Done</Text>
             </TouchableOpacity>
           </View>
 
-          {/* Category Tabs */}
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="bg-white border-b border-gray-200">
-            <View className="flex-row p-2">
+          {/* Category pills + inline search */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#fff',
+              borderBottomWidth: 1,
+              borderBottomColor: '#e2e8f0',
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+            }}
+          >
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ flexDirection: 'row', alignItems: 'center' }}
+              style={{ flexShrink: 1 }}
+              keyboardShouldPersistTaps="handled"
+            >
               {categories.map((cat) => (
                 <TouchableOpacity
                   key={cat.id}
-                  className={`px-4 py-2 rounded-lg mr-2 ${selectedCategoryId === cat.id ? 'bg-primary' : 'bg-gray-100'}`}
                   onPress={() => handleSelectCategory(cat.id)}
+                  style={{
+                    paddingHorizontal: 14,
+                    paddingVertical: 7,
+                    borderRadius: 20,
+                    backgroundColor: selectedCategoryId === cat.id ? '#4338CA' : '#e2e8f0',
+                    marginRight: 8,
+                  }}
                 >
-                  <Text className={`font-medium ${selectedCategoryId === cat.id ? 'text-white' : 'text-gray-700'}`}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: selectedCategoryId === cat.id ? '#fff' : '#64748b' }}>
                     {cat.name}
                   </Text>
                 </TouchableOpacity>
               ))}
+            </ScrollView>
+
+            {/* Inline search */}
+            <View
+              style={{
+                flex: 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: '#f1f5f9',
+                borderRadius: 10,
+                paddingHorizontal: 10,
+                height: 36,
+                marginLeft: 8,
+                minWidth: 90,
+              }}
+            >
+              <Feather name="search" size={14} color="#94a3b8" style={{ marginRight: 6 }} />
+              <TextInput
+                style={{ flex: 1, fontSize: 13, color: '#1e1b4b', paddingVertical: 0 }}
+                value={menuSearchQuery}
+                onChangeText={setMenuSearchQuery}
+                placeholder="Search…"
+                placeholderTextColor="#94a3b8"
+                returnKeyType="search"
+                clearButtonMode="while-editing"
+              />
+              {menuSearchQuery.length > 0 && Platform.OS !== 'ios' && (
+                <TouchableOpacity onPress={() => setMenuSearchQuery('')}>
+                  <Feather name="x" size={14} color="#94a3b8" />
+                </TouchableOpacity>
+              )}
             </View>
-          </ScrollView>
+          </View>
 
           {/* Product Grid */}
-          <ScrollView className="flex-1 p-2">
-            {products.length === 0 && (
-              <Text className="text-gray-400 text-center mt-8">No products in this category</Text>
-            )}
-            <View className="flex-row flex-wrap">
-              {products.map((prod) => {
-                const outOfStock = prod.isOutOfStock || prod.stockQty <= 0;
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 8, paddingBottom: 16 }} keyboardShouldPersistTaps="handled">
+            {(() => {
+              const q = menuSearchQuery.trim().toLowerCase();
+              const visible = q
+                ? products.filter((p) => p.name.toLowerCase().includes(q))
+                : products;
+              if (visible.length === 0) {
                 return (
-                  <TouchableOpacity
-                    key={prod.id}
-                    style={{ width: `${100 / numCols}%` }}
-                    className={`p-2`}
-                    onPress={() => handleAddItem(prod)}
-                    disabled={outOfStock}
-                  >
-                    <View className={`bg-white rounded-2xl p-4 border-2 items-center justify-center min-h-[110px] ${
-                      outOfStock ? 'border-gray-200 opacity-40' : 'border-gray-100 active:border-accent'
-                    }`}>
-                      <Text className="text-3xl mb-2">
-                        {prod.name.charAt(0).toUpperCase()}
-                      </Text>
-                      <Text className="text-sm font-bold text-primary text-center" numberOfLines={2}>{prod.name}</Text>
-                      <Text className="text-base font-bold text-accent mt-1">{formatKES(prod.price)}</Text>
-                      {outOfStock ? (
-                        <Text className="text-xs text-red-500 mt-1">Out of stock</Text>
-                      ) : (
-                        <Text className="text-xs text-gray-400 mt-1">Stock: {prod.stockQty}</Text>
-                      )}
-                    </View>
-                  </TouchableOpacity>
+                  <Text style={{ color: '#9ca3af', textAlign: 'center', marginTop: 40, fontSize: 14 }}>
+                    {q ? `No items matching "${menuSearchQuery}"` : 'No items in this category'}
+                  </Text>
                 );
-              })}
-            </View>
+              }
+              return (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                  {visible.map((prod) => {
+                    const outOfStock = prod.isOutOfStock || prod.stockQty <= 0;
+                    return (
+                      <TouchableOpacity
+                        key={prod.id}
+                        onPress={() => handleAddItem(prod)}
+                        disabled={outOfStock}
+                        style={{ width: `${100 / numCols}%`, padding: 4 }}
+                        activeOpacity={0.75}
+                      >
+                        <View
+                          style={{
+                            backgroundColor: outOfStock ? '#f1f5f9' : '#fff',
+                            borderRadius: 14,
+                            padding: 12,
+                            borderWidth: 2,
+                            borderColor: outOfStock ? '#e2e8f0' : '#f1f5f9',
+                            minHeight: 110,
+                            justifyContent: 'space-between',
+                            opacity: outOfStock ? 0.55 : 1,
+                          }}
+                        >
+                          <Text style={{ fontSize: 26, marginBottom: 6 }}>
+                            {prod.name.charAt(0).toUpperCase()}
+                          </Text>
+                          <View>
+                            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e1b4b' }} numberOfLines={2}>
+                              {prod.name}
+                            </Text>
+                            <Text style={{ fontSize: 13, fontWeight: '800', color: '#4338CA', marginTop: 2 }}>
+                              {formatKES(prod.price)}
+                            </Text>
+                            {outOfStock ? (
+                              <Text style={{ fontSize: 10, color: '#ef4444', marginTop: 2 }}>Out of stock</Text>
+                            ) : (
+                              <Text style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>{prod.stockQty} left</Text>
+                            )}
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              );
+            })()}
           </ScrollView>
         </SafeAreaView>
       </Modal>

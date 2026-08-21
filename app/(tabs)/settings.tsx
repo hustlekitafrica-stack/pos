@@ -19,7 +19,7 @@ import {
   disconnectKitchenPrinter,
   type PrinterDevice,
 } from '@/lib/printer/connection';
-import { pushAllToSupabase, type TablePushResult } from '@/lib/db/sync';
+import { pushAllToSupabase, triggerAutoSync, type TablePushResult } from '@/lib/db/sync';
 import { seedDatabase } from '@/lib/db/seed';
 import { deleteStaff } from '@/lib/db/actions';
 import { Role } from '@/types';
@@ -138,7 +138,7 @@ export default function SettingsScreen() {
       setShowAddStaff(false);
       Alert.alert('Staff Added', `${staffName} (${staffRole})`);
       await loadStaff();
-      pushAllToSupabase().catch(() => {});
+      triggerAutoSync();
     } catch (e) {
       Alert.alert('Error', 'Could not add staff. Please try again.');
     }
@@ -152,6 +152,7 @@ export default function SettingsScreen() {
     await database.write(async () => {
       await staff.update((s) => { s.isActive = !s.isActive; });
     });
+    triggerAutoSync();
     await loadStaff();
   };
 

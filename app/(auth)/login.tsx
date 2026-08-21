@@ -5,7 +5,6 @@ import { router } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
 import { findStaffByPin, getActiveShift } from '@/lib/db/actions';
 import { seedDatabase } from '@/lib/db/seed';
-import { syncDatabase } from '@/lib/db/sync';
 
 export default function LoginScreen() {
   const [pin, setPin] = useState('');
@@ -15,9 +14,7 @@ export default function LoginScreen() {
   const login = useAuthStore((s) => s.login);
 
   useEffect(() => {
-    seedDatabase()
-      .then(() => syncDatabase().catch(() => {}))
-      .finally(() => setSeeding(false));
+    seedDatabase().finally(() => setSeeding(false));
   }, []);
 
   const handlePinPress = (digit: string) => {

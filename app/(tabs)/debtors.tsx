@@ -8,6 +8,7 @@ import { Customer, CreditTransaction } from '@/lib/db/models';
 import { Q } from '@nozbe/watermelondb';
 import { formatKES, toCents } from '@/utils/currency';
 import { useAuthStore } from '@/stores/authStore';
+import { triggerAutoSync } from '@/lib/db/sync';
 
 interface CustomerWithBalance {
   customer: Customer;
@@ -74,6 +75,7 @@ export default function DebtorsScreen() {
     setNewPhone('');
     setNewLimit('');
     setShowAdd(false);
+    triggerAutoSync();
     await loadCustomers();
   };
 
@@ -99,6 +101,7 @@ export default function DebtorsScreen() {
     setRepayMpesaRef('');
     setShowRepay(null);
     Alert.alert('Repayment Recorded', `${formatKES(amountCents)} received`);
+    triggerAutoSync();
     await loadCustomers();
   };
 

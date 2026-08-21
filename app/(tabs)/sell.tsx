@@ -17,6 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { router, useFocusEffect } from 'expo-router';
 import { useDeviceStore } from '@/stores/deviceStore';
 import { useAuthStore } from '@/stores/authStore';
+import { triggerAutoSync } from '@/lib/db/sync';
 import { formatKES } from '@/utils/currency';
 import { database } from '@/lib/db';
 import {
@@ -62,12 +63,14 @@ async function findOrCreateTable(identifier: string): Promise<RestaurantTable> {
     .query(Q.where('name', trimmed))
     .fetch();
   if (existing.length > 0) return existing[0];
-  return database.write(async () =>
+  const table = await database.write(async () =>
     database.get<RestaurantTable>('restaurant_tables').create((t) => {
       t.name = trimmed;
       t.status = 'free';
     })
   );
+  triggerAutoSync();
+  return table;
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -299,34 +302,27 @@ export default function SellScreen() {
 
   const ProductArea = () => (
     <View style={{ flex: 1, backgroundColor: '#f8fafc' }}>
-      {/* Station tabs */}
+      {/* Station tabs + inline search */}
       <View
         style={{
           flexDirection: 'row',
+          alignItems: 'center',
           backgroundColor: '#fff',
           borderBottomWidth: 1,
           borderBottomColor: '#e2e8f0',
           paddingHorizontal: 12,
-          paddingTop: 8,
-          paddingBottom: 0,
+          paddingVertical: 6,
         }}
       >
         {STATIONS.map(({ label, station }) => {
           const active = station === activeStation;
-          // Count items in cart from this station
-          const stationCount = cart
-            .filter((ci) => {
-              // We'll mark products with the station via a lookup at render time
-              return ci.product && true; // all shown; simplified for now
-            })
-            .reduce((_, __) => _, 0); // placeholder — badge per station omitted for clarity
           return (
             <TouchableOpacity
               key={station}
               onPress={() => handleSelectStation(station)}
               style={{
-                paddingHorizontal: 20,
-                paddingVertical: 10,
+                paddingHorizontal: 14,
+                paddingVertical: 8,
                 marginRight: 4,
                 borderBottomWidth: 3,
                 borderBottomColor: active ? '#4338CA' : 'transparent',
@@ -344,6 +340,35 @@ export default function SellScreen() {
             </TouchableOpacity>
           );
         })}
+        {/* Search — inline to the right of tabs */}
+        <View
+          style={{
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: '#f1f5f9',
+            borderRadius: 10,
+            paddingHorizontal: 10,
+            height: 36,
+            marginLeft: 8,
+          }}
+        >
+          <Feather name="search" size={14} color="#94a3b8" style={{ marginRight: 6 }} />
+          <TextInput
+            style={{ flex: 1, fontSize: 13, color: '#1e1b4b', paddingVertical: 0 }}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search…"
+            placeholderTextColor="#94a3b8"
+            returnKeyType="search"
+            clearButtonMode="while-editing"
+          />
+          {searchQuery.length > 0 && Platform.OS !== 'ios' && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Feather name="x" size={14} color="#94a3b8" />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {/* Category pills */}
@@ -388,44 +413,6 @@ export default function SellScreen() {
           ))}
         </ScrollView>
       )}
-
-      {/* Search */}
-      <View
-        style={{
-          backgroundColor: '#fff',
-          paddingHorizontal: 12,
-          paddingVertical: 8,
-          borderBottomWidth: 1,
-          borderBottomColor: '#e2e8f0',
-        }}
-      >
-        <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: '#f1f5f9',
-            borderRadius: 10,
-            paddingHorizontal: 12,
-            height: 38,
-          }}
-        >
-          <Text style={{ color: '#94a3b8', fontSize: 15, marginRight: 6 }}>🔍</Text>
-          <TextInput
-            style={{ flex: 1, fontSize: 14, color: '#1e1b4b', paddingVertical: 0 }}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Search items…"
-            placeholderTextColor="#94a3b8"
-            returnKeyType="search"
-            clearButtonMode="while-editing"
-          />
-          {searchQuery.length > 0 && Platform.OS !== 'ios' && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Text style={{ color: '#94a3b8', fontSize: 16, paddingLeft: 8 }}>✕</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
 
       {/* Products */}
       {menuLoading ? (
@@ -556,7 +543,7 @@ export default function SellScreen() {
             backgroundColor: '#1e1b4b',
             borderTopLeftRadius: 20,
             borderTopRightRadius: 20,
-            maxHeight: 420,
+            maxHeight: 560,
           }}
         >
           {/* Sheet header */}
@@ -680,6 +667,56 @@ export default function SellScreen() {
               ))
             )}
           </ScrollView>
+
+          {/* Table/Room + Send Order */}
+          <View style={{ paddingHorizontal: 12, paddingTop: 10, paddingBottom: 12, borderTopWidth: 1, borderTopColor: '#2d2a5e' }}>
+            <Text style={{ color: clientIdentifier.trim() ? '#94a3b8' : '#fca5a5', fontSize: 10, fontWeight: '600', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              Table / Room / Name{clientIdentifier.trim() ? '' : ' (required)'}
+            </Text>
+            <TextInput
+              style={{
+                backgroundColor: '#fff',
+                borderRadius: 10,
+                paddingHorizontal: 12,
+                paddingVertical: 9,
+                color: '#1e1b4b',
+                fontSize: 14,
+                borderWidth: 2,
+                borderColor: clientIdentifier.trim() ? '#4338CA' : '#ef4444',
+                fontWeight: '600',
+                marginBottom: 10,
+              }}
+              value={clientIdentifier}
+              onChangeText={setClientIdentifier}
+              placeholder="e.g. Table 3, Room 205, John"
+              placeholderTextColor="#94a3b8"
+              returnKeyType="done"
+            />
+            {cart.length > 0 && (
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                <Text style={{ color: '#94a3b8', fontSize: 13 }}>{cartCount} item{cartCount !== 1 ? 's' : ''}</Text>
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800' }}>{formatKES(cartTotal)}</Text>
+              </View>
+            )}
+            <TouchableOpacity
+              onPress={handleSendOrder}
+              disabled={sending || cartCount === 0}
+              style={{
+                backgroundColor: sending || cartCount === 0 ? '#334155' : '#4338CA',
+                borderRadius: 12,
+                paddingVertical: 13,
+                alignItems: 'center',
+              }}
+            >
+              {sending ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800' }}>
+                  Send Order{cartCount > 0 ? ` (${cartCount})` : ''}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -690,100 +727,37 @@ export default function SellScreen() {
   // ─────────────────────────────────────────────────────────────────────────
 
   const BottomBar = () => (
-    <View
+    <TouchableOpacity
+      onPress={() => setCartDetailOpen(true)}
+      activeOpacity={0.85}
       style={{
         backgroundColor: '#1e1b4b',
         borderTopWidth: 1,
-        borderTopColor: '#1e1b4b',
-        paddingHorizontal: 12,
+        borderTopColor: '#2d2a5e',
+        paddingHorizontal: 16,
         paddingTop: 10,
         paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+        flexDirection: 'row',
+        alignItems: 'center',
       }}
     >
-      {/* Client identifier input — mandatory */}
-      <Text style={{ color: clientIdentifier.trim() ? '#94a3b8' : '#fca5a5', fontSize: 11, fontWeight: '600', marginBottom: 4 }}>
-        TABLE / ROOM / CUSTOMER NAME {clientIdentifier.trim() ? '' : '(required)'}
-      </Text>
-      <TextInput
+      <View
         style={{
-          backgroundColor: '#fff',
-          borderRadius: 10,
-          paddingHorizontal: 12,
-          paddingVertical: 9,
-          color: '#1e1b4b',
-          fontSize: 14,
-          marginBottom: 10,
-          borderWidth: 2,
-          borderColor: clientIdentifier.trim() ? '#4338CA' : '#ef4444',
-          fontWeight: '600',
+          backgroundColor: '#4338CA',
+          borderRadius: 14,
+          paddingHorizontal: 10,
+          paddingVertical: 4,
+          marginRight: 10,
         }}
-        value={clientIdentifier}
-        onChangeText={setClientIdentifier}
-        placeholder="e.g. Table 3, Room 205, John"
-        placeholderTextColor="#94a3b8"
-        returnKeyType="done"
-      />
-
-      {/* Row: cart summary + send button */}
-      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        {/* Cart summary — tap to expand detail */}
-        <TouchableOpacity
-          onPress={() => setCartDetailOpen(true)}
-          style={{
-            flex: 1,
-            flexDirection: 'row',
-            alignItems: 'center',
-            marginRight: 10,
-          }}
-        >
-          <View
-            style={{
-              backgroundColor: cartCount > 0 ? '#4338CA' : '#334155',
-              borderRadius: 14,
-              paddingHorizontal: 10,
-              paddingVertical: 4,
-              marginRight: 8,
-            }}
-          >
-            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '800' }}>
-              {cartCount}
-            </Text>
-          </View>
-          <View>
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>
-              {cartCount === 0 ? 'No items yet' : formatKES(cartTotal)}
-            </Text>
-            {cartCount > 0 && (
-              <Text style={{ color: '#64748b', fontSize: 11 }}>
-                Tap to edit order
-              </Text>
-            )}
-          </View>
-        </TouchableOpacity>
-
-        {/* Send Order */}
-        <TouchableOpacity
-          onPress={handleSendOrder}
-          disabled={sending || cartCount === 0}
-          style={{
-            backgroundColor: sending || cartCount === 0 ? '#334155' : '#4338CA',
-            borderRadius: 12,
-            paddingVertical: 12,
-            paddingHorizontal: 20,
-            alignItems: 'center',
-            justifyContent: 'center',
-          }}
-        >
-          {sending ? (
-            <ActivityIndicator color="#fff" size="small" />
-          ) : (
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800' }}>
-              Send Order
-            </Text>
-          )}
-        </TouchableOpacity>
+      >
+        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '800' }}>{cartCount}</Text>
       </View>
-    </View>
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>{formatKES(cartTotal)}</Text>
+        <Text style={{ color: '#64748b', fontSize: 11 }}>Tap to view & send order</Text>
+      </View>
+      <Feather name="chevron-up" size={18} color="#64748b" />
+    </TouchableOpacity>
   );
 
   // ─────────────────────────────────────────────────────────────────────────

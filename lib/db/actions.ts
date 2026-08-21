@@ -2,6 +2,7 @@ import { Q } from '@nozbe/watermelondb';
 import { database } from './index';
 import { Staff, Category, Product, RestaurantTable, Order, OrderItem, Payment, Shift, AuditLog } from './models';
 import { hashPin, verifyPin } from '../auth/pin';
+import { triggerAutoSync } from './sync';
 
 // ─── Auth ───────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,7 @@ export async function deleteStaff(id: string): Promise<void> {
     const staff = await database.get<Staff>('staff').find(id);
     await staff.destroyPermanently();
   });
+  triggerAutoSync();
 }
 
 // ─── Categories ─────────────────────────────────────────────────────────────
@@ -28,12 +30,14 @@ export async function getAllCategories(): Promise<Category[]> {
 }
 
 export async function createCategory(name: string, prepStation: string): Promise<Category> {
-  return database.write(async () => {
+  const result = await database.write(async () => {
     return database.get<Category>('categories').create((c) => {
       c.name = name;
       c.prepStation = prepStation;
     });
   });
+  triggerAutoSync();
+  return result;
 }
 
 export async function updateCategory(id: string, name: string, prepStation: string): Promise<void> {
@@ -44,6 +48,7 @@ export async function updateCategory(id: string, name: string, prepStation: stri
       c.prepStation = prepStation;
     });
   });
+  triggerAutoSync();
 }
 
 export async function deleteCategory(id: string): Promise<void> {
@@ -55,6 +60,7 @@ export async function deleteCategory(id: string): Promise<void> {
     const cat = await database.get<Category>('categories').find(id);
     await cat.destroyPermanently();
   });
+  triggerAutoSync();
 }
 
 // ─── Products ───────────────────────────────────────────────────────────────
@@ -95,7 +101,7 @@ export async function createProduct(data: {
   stockQty: number;
   unit: string;
 }): Promise<Product> {
-  return database.write(async () => {
+  const result = await database.write(async () => {
     return database.get<Product>('products').create((p) => {
       p.name = data.name;
       p.categoryId = data.categoryId;
@@ -109,6 +115,8 @@ export async function createProduct(data: {
       p.isActive = true;
     });
   });
+  triggerAutoSync();
+  return result;
 }
 
 export async function updateProduct(
@@ -125,6 +133,7 @@ export async function updateProduct(
       if (data.isActive !== undefined) p.isActive = data.isActive;
     });
   });
+  triggerAutoSync();
 }
 
 // ─── Tables ─────────────────────────────────────────────────────────────────
@@ -134,12 +143,14 @@ export async function getAllTables(): Promise<RestaurantTable[]> {
 }
 
 export async function createTable(name: string): Promise<RestaurantTable> {
-  return database.write(async () => {
+  const result = await database.write(async () => {
     return database.get<RestaurantTable>('restaurant_tables').create((t) => {
       t.name = name;
       t.status = 'free';
     });
   });
+  triggerAutoSync();
+  return result;
 }
 
 export async function updateTableStatus(id: string, status: string): Promise<void> {
@@ -149,6 +160,7 @@ export async function updateTableStatus(id: string, status: string): Promise<voi
       t.status = status;
     });
   });
+  triggerAutoSync();
 }
 
 // ─── Orders ─────────────────────────────────────────────────────────────────
@@ -160,7 +172,7 @@ export async function createOrder(data: {
   deviceId: string;
   roomNumber?: string;
 }): Promise<Order> {
-  return database.write(async () => {
+  const result = await database.write(async () => {
     const order = await database.get<Order>('orders').create((o) => {
       o.tableId = data.tableId;
       o.staffId = data.staffId;
@@ -184,6 +196,8 @@ export async function createOrder(data: {
 
     return order;
   });
+  triggerAutoSync();
+  return result;
 }
 
 export async function getActiveOrderForTable(tableId: string): Promise<Order | null> {
@@ -230,7 +244,7 @@ export async function addItemToOrder(data: {
 
   // Recalculate order total AFTER the write commits so the query sees the new item
   await recalculateOrderTotal(data.orderId);
-
+  triggerAutoSync();
   return item;
 }
 
@@ -256,7 +270,7 @@ export async function recalculateOrderTotal(orderId: string): Promise<void> {
 }
 
 export async function sendOrder(orderId: string): Promise<void> {
-  await database.write(async () => {
+  await database.write(async () => {  // eslint-disable-line
     const order = await database.get<Order>('orders').find(orderId);
     const items = await database
       .get<OrderItem>('order_items')
@@ -287,6 +301,7 @@ export async function sendOrder(orderId: string): Promise<void> {
       o.status = 'sent';
     });
   });
+  triggerAutoSync();
 }
 
 export async function markOrderServed(orderId: string): Promise<void> {
@@ -338,6 +353,7 @@ export async function voidOrderItem(
     // Recalculate order total
     await recalculateOrderTotal(item.orderId);
   });
+  triggerAutoSync();
 }
 
 // ─── Payments ───────────────────────────────────────────────────────────────
@@ -348,7 +364,7 @@ export async function recordPayment(data: {
   amount: number;
   mpesaRef?: string;
 }): Promise<Payment> {
-  return database.write(async () => {
+  const result = await database.write(async () => {
     const payment = await database.get<Payment>('payments').create((p) => {
       p.orderId = data.orderId;
       p.method = data.method;
@@ -391,6 +407,8 @@ export async function recordPayment(data: {
 
     return payment;
   });
+  triggerAutoSync();
+  return result;
 }
 
 // ─── Split / Merge Orders ────────────────────────────────────────────────────
@@ -427,6 +445,7 @@ export async function splitOrder(
 
   await recalculateOrderTotal(originalOrderId);
   await recalculateOrderTotal(newOrder.id);
+  triggerAutoSync();
   return newOrder;
 }
 
@@ -451,12 +470,13 @@ export async function mergeOrders(
   });
 
   await recalculateOrderTotal(targetOrderId);
+  triggerAutoSync();
 }
 
 // ─── Shifts ─────────────────────────────────────────────────────────────────
 
 export async function openShift(staffId: string, openingCash: number): Promise<Shift> {
-  return database.write(async () => {
+  const result = await database.write(async () => {
     return database.get<Shift>('shifts').create((s) => {
       s.staffId = staffId;
       s.openedAt = new Date();
@@ -464,6 +484,8 @@ export async function openShift(staffId: string, openingCash: number): Promise<S
       s.status = 'open';
     });
   });
+  triggerAutoSync();
+  return result;
 }
 
 export async function getActiveShift(staffId: string): Promise<Shift | null> {
@@ -517,6 +539,7 @@ export async function closeShift(shiftId: string, closingCashActual: number): Pr
       s.status = 'closed';
     });
   });
+  triggerAutoSync();
 }
 
 export async function getShiftSummary(shiftId: string): Promise<{
@@ -556,6 +579,7 @@ export async function requestShiftClosure(shiftId: string): Promise<void> {
     const shift = await database.get<Shift>('shifts').find(shiftId);
     await shift.update((s) => { s.status = 'pending_approval'; });
   });
+  triggerAutoSync();
 }
 
 export async function approveShiftClosure(
@@ -587,6 +611,7 @@ export async function approveShiftClosure(
       s.closureNotes = notes ?? null;
     });
   });
+  triggerAutoSync();
 }
 
 export async function getPendingShifts(): Promise<Array<{ shift: Shift; staffName: string }>> {

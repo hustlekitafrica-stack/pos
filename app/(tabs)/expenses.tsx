@@ -13,6 +13,7 @@ import { Q } from '@nozbe/watermelondb';
 import { formatKES, toCents } from '@/utils/currency';
 import { useAuthStore } from '@/stores/authStore';
 import { captureReceiptImage, scanReceipt } from '@/lib/ai/receiptScan';
+import { triggerAutoSync } from '@/lib/db/sync';
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -182,6 +183,7 @@ export default function ExpensesScreen() {
 
     resetForm(); setShowAdd(false);
     Alert.alert('Saved', `${formatKES(amountCents)} expense recorded.`);
+    triggerAutoSync();
     await loadData();
   };
 

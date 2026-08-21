@@ -7,6 +7,7 @@ import { database } from '@/lib/db';
 import { Product, StockAdjustment, Category } from '@/lib/db/models';
 import { Q } from '@nozbe/watermelondb';
 import { useAuthStore } from '@/stores/authStore';
+import { triggerAutoSync } from '@/lib/db/sync';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -98,6 +99,7 @@ export default function StockScreen() {
     setAdjustQty('');
     setShowAdjust(null);
     Alert.alert('Stock Updated', `${changeQty > 0 ? '+' : ''}${changeQty} applied`);
+    triggerAutoSync();
     await loadProducts();
   };
 
@@ -176,6 +178,7 @@ export default function StockScreen() {
         updated++;
       }
       Alert.alert('Import Complete', `Updated: ${updated}  ·  Skipped: ${skipped}`);
+      triggerAutoSync();
       await loadProducts();
     } catch (e: any) {
       Alert.alert('Import Error', e?.message ?? 'Could not read file');

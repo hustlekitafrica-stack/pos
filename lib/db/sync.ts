@@ -204,3 +204,19 @@ export async function syncDatabase() {
     throw error;
   }
 }
+
+// ─── Auto-sync on write ──────────────────────────────────────────────────────
+
+let _syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Fire-and-forget debounced sync. Call after any local write.
+ * Collapses rapid consecutive writes into a single sync 2 s later.
+ */
+export function triggerAutoSync(): void {
+  if (_syncTimer) clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(() => {
+    syncDatabase().catch(() => {});
+    _syncTimer = null;
+  }, 2000);
+}
