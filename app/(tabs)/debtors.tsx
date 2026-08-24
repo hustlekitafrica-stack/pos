@@ -4,7 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, router } from 'expo-router';
 import { database } from '@/lib/db';
-import { Customer, CreditTransaction } from '@/lib/db/models';
+import { Customer, CreditTransaction, OrderItem, Product } from '@/lib/db/models';
 import { Q } from '@nozbe/watermelondb';
 import { formatKES, toCents } from '@/utils/currency';
 import { useAuthStore } from '@/stores/authStore';
@@ -21,6 +21,7 @@ export default function DebtorsScreen() {
   const [showRepay, setShowRepay] = useState<Customer | null>(null);
   const [showDetail, setShowDetail] = useState<Customer | null>(null);
   const [detailTxns, setDetailTxns] = useState<CreditTransaction[]>([]);
+  const [txnItems, setTxnItems] = useState<Record<string, { name: string; qty: number; unitPrice: number }[]>>({});
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newLimit, setNewLimit] = useState('');
@@ -111,6 +112,32 @@ export default function DebtorsScreen() {
       .query(Q.where('customer_id', cust.id), Q.sortBy('created_at', Q.desc))
       .fetch();
     setDetailTxns(txns);
+
+    // Fetch order items + product names for each credit_sale
+    const itemMap: Record<string, { name: string; qty: number; unitPrice: number }[]> = {};
+    for (const txn of txns) {
+      if (txn.type === 'credit_sale' && txn.orderId) {
+        try {
+          const orderItems = await database
+            .get<OrderItem>('order_items')
+            .query(Q.where('order_id', txn.orderId), Q.where('voided', false))
+            .fetch();
+          const resolved: { name: string; qty: number; unitPrice: number }[] = [];
+          for (const oi of orderItems) {
+            try {
+              const prod = await database.get<Product>('products').find(oi.productId);
+              resolved.push({ name: prod.name, qty: oi.qty, unitPrice: oi.unitPrice });
+            } catch {
+              resolved.push({ name: oi.productId, qty: oi.qty, unitPrice: oi.unitPrice });
+            }
+          }
+          itemMap[txn.id] = resolved;
+        } catch {
+          itemMap[txn.id] = [];
+        }
+      }
+    }
+    setTxnItems(itemMap);
     setShowDetail(cust);
   };
 
@@ -309,17 +336,44 @@ export default function DebtorsScreen() {
               return Object.entries(groups).map(([dateLabel, txns]) => {
                 const dayTotal = txns.reduce((s, t) => s + (t.type === 'credit_sale' ? t.amount : -t.amount), 0);
                 const printDay = () => {
-                  const lines = [
-                    `=== ${showDetail?.name} ===`,
-                    dateLabel,
-                    '─'.repeat(32),
-                    ...txns.map((t) => `${t.type === 'credit_sale' ? 'Sale' : 'Repayment'}  ${formatKES(t.amount)}`),
-                    '─'.repeat(32),
-                    `Day Total: ${formatKES(dayTotal)}`,
-                    '',
-                  ].join('\n');
+                  const SEP = '================================';
+                  const DIV = '--------------------------------';
+                  const lines: string[] = [
+                    '\x1b\x61\x01', // center
+                    'CREDIT ACCOUNT STATEMENT\n',
+                    SEP + '\n',
+                    '\x1b\x61\x00', // left
+                    `Customer: ${showDetail?.name}\n`,
+                    `Date: ${dateLabel}\n`,
+                    DIV + '\n',
+                  ];
+                  for (const t of txns) {
+                    const time = t.createdAt
+                      ? new Date(t.createdAt).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })
+                      : '';
+                    if (t.type === 'credit_sale') {
+                      lines.push(`Credit Sale${time ? '  ' + time : ''}\n`);
+                      const items = txnItems[t.id] ?? [];
+                      for (const it of items) {
+                        const label = `  ${it.qty}x ${it.name}`;
+                        const price = formatKES(it.unitPrice * it.qty);
+                        const pad = Math.max(1, 32 - label.length - price.length);
+                        lines.push(`${label}${' '.repeat(pad)}${price}\n`);
+                      }
+                      lines.push(`  ${'─'.repeat(28)}\n`);
+                      lines.push(`  Subtotal:${' '.repeat(32 - 10 - formatKES(t.amount).length)}${formatKES(t.amount)}\n`);
+                    } else {
+                      const method = t.paymentMethod ? ` (${t.paymentMethod})` : '';
+                      lines.push(`Repayment${method}   -${formatKES(t.amount)}\n`);
+                    }
+                    lines.push('\n');
+                  }
+                  lines.push(DIV + '\n');
+                  lines.push(`DAY TOTAL:${' '.repeat(32 - 10 - formatKES(dayTotal).length)}${formatKES(dayTotal)}\n`);
+                  lines.push(SEP + '\n');
+                  lines.push('\n\n\n');
                   const { sendToPrinter } = require('@/lib/printer/connection');
-                  sendToPrinter('bar', new TextEncoder().encode(lines)).catch(() => {});
+                  sendToPrinter('bar', new TextEncoder().encode(lines.join(''))).catch(() => {});
                 };
                 return (
                   <View key={dateLabel} className="mb-4">
@@ -333,19 +387,47 @@ export default function DebtorsScreen() {
                         <Text className="text-xs text-primary font-medium">Print</Text>
                       </TouchableOpacity>
                     </View>
-                    {txns.map((txn) => (
-                      <View key={txn.id} className="bg-white rounded-xl p-3 mb-1 flex-row justify-between border border-gray-100">
-                        <View>
-                          <Text className="text-sm font-medium text-primary">
-                            {txn.type === 'credit_sale' ? 'Credit Sale' : 'Repayment'}
-                          </Text>
-                          {txn.mpesaRef ? <Text className="text-xs text-gray-500">Ref: {txn.mpesaRef}</Text> : null}
+                    {txns.map((txn) => {
+                      const items = txn.type === 'credit_sale' ? (txnItems[txn.id] ?? []) : [];
+                      const time = txn.createdAt
+                        ? new Date(txn.createdAt).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' })
+                        : '';
+                      return (
+                        <View key={txn.id} className="bg-white rounded-xl mb-1 border border-gray-100 overflow-hidden">
+                          {/* Transaction header */}
+                          <View className="flex-row justify-between items-center px-3 pt-3 pb-1">
+                            <View>
+                              <Text className="text-sm font-semibold text-primary">
+                                {txn.type === 'credit_sale' ? 'Credit Sale' : 'Repayment'}
+                                {time ? <Text className="text-xs text-gray-400">  {time}</Text> : null}
+                              </Text>
+                              {txn.mpesaRef ? <Text className="text-xs text-gray-400">Ref: {txn.mpesaRef}</Text> : null}
+                              {txn.type === 'repayment' && txn.paymentMethod ? (
+                                <Text className="text-xs text-gray-400">{txn.paymentMethod}</Text>
+                              ) : null}
+                            </View>
+                            <Text className={`text-base font-bold ${txn.type === 'credit_sale' ? 'text-red-600' : 'text-green-600'}`}>
+                              {txn.type === 'credit_sale' ? '+' : '-'}{formatKES(txn.amount)}
+                            </Text>
+                          </View>
+                          {/* Item breakdown for credit sales */}
+                          {items.length > 0 && (
+                            <View style={{ paddingHorizontal: 12, paddingBottom: 10, borderTopWidth: 1, borderTopColor: '#f1f5f9', marginTop: 4, paddingTop: 6 }}>
+                              {items.map((it, idx) => (
+                                <View key={idx} style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 }}>
+                                  <Text style={{ fontSize: 12, color: '#475569' }}>
+                                    {it.qty}×  {it.name}
+                                  </Text>
+                                  <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '600' }}>
+                                    {formatKES(it.unitPrice * it.qty)}
+                                  </Text>
+                                </View>
+                              ))}
+                            </View>
+                          )}
                         </View>
-                        <Text className={`text-base font-bold ${txn.type === 'credit_sale' ? 'text-red-600' : 'text-green-600'}`}>
-                          {txn.type === 'credit_sale' ? '+' : '-'}{formatKES(txn.amount)}
-                        </Text>
-                      </View>
-                    ))}
+                      );
+                    })}
                     <View className="flex-row justify-end px-2">
                       <Text className="text-xs text-gray-500 font-medium">
                         Day total: <Text className={dayTotal >= 0 ? 'text-red-600' : 'text-green-600'}>{formatKES(Math.abs(dayTotal))}</Text>

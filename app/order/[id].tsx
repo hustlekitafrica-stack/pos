@@ -15,6 +15,7 @@ import { sendToPrinter } from '@/lib/printer/connection';
 import {
   getOrderItems,
   addItemToOrder,
+  reduceOrderItem,
   sendOrder,
   markOrderServed,
   voidOrderItem,
@@ -67,6 +68,12 @@ export default function OrderScreen() {
   const [products, setProducts] = useState<ProductModel[]>([]);
   const [productNames, setProductNames] = useState<Record<string, string>>({});
   const [menuSearchQuery, setMenuSearchQuery] = useState('');
+  const [menuStation, setMenuStation] = useState<'bar' | 'kitchen'>(
+    can('adjustBarStock') ? 'bar' : 'kitchen'
+  );
+  const [cartExpanded, setCartExpanded] = useState(true);
+  const canSeeMenuBar     = can('adjustBarStock');
+  const canSeeMenuKitchen = can('adjustKitchenStock');
 
   const loadOrder = useCallback(async () => {
     if (!orderId) return;
@@ -108,13 +115,18 @@ export default function OrderScreen() {
     }, [loadOrder])
   );
 
-  const loadCategories = async () => {
-    const cats = await getAllCategories();
-    setCategories(cats);
-    if (cats.length > 0) {
-      setSelectedCategoryId(cats[0].id);
-      const prods = await getProductsByCategory(cats[0].id);
+  const loadCategories = async (station?: 'bar' | 'kitchen') => {
+    const all = await getAllCategories();
+    const targetStation = station ?? menuStation;
+    const filtered = all.filter((c) => c.prepStation === targetStation);
+    setCategories(filtered);
+    if (filtered.length > 0) {
+      setSelectedCategoryId(filtered[0].id);
+      const prods = await getProductsByCategory(filtered[0].id);
       setProducts(prods);
+    } else {
+      setSelectedCategoryId(null);
+      setProducts([]);
     }
   };
 
@@ -122,6 +134,11 @@ export default function OrderScreen() {
     setSelectedCategoryId(catId);
     const prods = await getProductsByCategory(catId);
     setProducts(prods);
+  };
+
+  const handleMenuStation = async (station: 'bar' | 'kitchen') => {
+    setMenuStation(station);
+    await loadCategories(station);
   };
 
   const handleAddItem = async (product: ProductModel) => {
@@ -561,7 +578,10 @@ export default function OrderScreen() {
   };
 
   const openMenuModal = async () => {
-    await loadCategories();
+    const initStation = can('adjustBarStock') ? 'bar' : 'kitchen';
+    setMenuStation(initStation);
+    setCartExpanded(true);
+    await loadCategories(initStation);
     setShowMenu(true);
   };
 
@@ -724,75 +744,45 @@ export default function OrderScreen() {
       {/* Menu Modal */}
       <Modal visible={showMenu} animationType="slide" onShow={() => setMenuSearchQuery('')}>
         <SafeAreaView style={{ flex: 1, backgroundColor: '#f8fafc' }}>
+
           {/* Header */}
-          <View
-            style={{
-              backgroundColor: '#1e1b4b',
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-            }}
-          >
+          <View style={{ backgroundColor: '#1e1b4b', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 }}>
             <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700' }}>Add Items</Text>
             <TouchableOpacity onPress={() => setShowMenu(false)} style={{ paddingHorizontal: 8, paddingVertical: 4 }}>
               <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>Done</Text>
             </TouchableOpacity>
           </View>
 
+          {/* Station tabs — only shown when user can see both */}
+          {canSeeMenuBar && canSeeMenuKitchen && (
+            <View style={{ flexDirection: 'row', backgroundColor: '#1e1b4b', paddingHorizontal: 16, paddingBottom: 10, gap: 8 }}>
+              {(['bar', 'kitchen'] as const).map((s) => (
+                <TouchableOpacity
+                  key={s}
+                  onPress={() => handleMenuStation(s)}
+                  style={{ flex: 1, paddingVertical: 7, borderRadius: 10, alignItems: 'center', backgroundColor: menuStation === s ? '#4338CA' : 'rgba(255,255,255,0.12)' }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{s === 'bar' ? 'Bar' : 'Kitchen'}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
           {/* Category pills + inline search */}
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              backgroundColor: '#fff',
-              borderBottomWidth: 1,
-              borderBottomColor: '#e2e8f0',
-              paddingHorizontal: 12,
-              paddingVertical: 6,
-            }}
-          >
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ flexDirection: 'row', alignItems: 'center' }}
-              style={{ flexShrink: 1 }}
-              keyboardShouldPersistTaps="handled"
-            >
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e2e8f0', paddingHorizontal: 12, paddingVertical: 6 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ flexDirection: 'row', alignItems: 'center' }} style={{ flexShrink: 1 }} keyboardShouldPersistTaps="handled">
               {categories.map((cat) => (
                 <TouchableOpacity
                   key={cat.id}
                   onPress={() => handleSelectCategory(cat.id)}
-                  style={{
-                    paddingHorizontal: 14,
-                    paddingVertical: 7,
-                    borderRadius: 20,
-                    backgroundColor: selectedCategoryId === cat.id ? '#4338CA' : '#e2e8f0',
-                    marginRight: 8,
-                  }}
+                  style={{ paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: selectedCategoryId === cat.id ? '#4338CA' : '#e2e8f0', marginRight: 8 }}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: selectedCategoryId === cat.id ? '#fff' : '#64748b' }}>
-                    {cat.name}
-                  </Text>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: selectedCategoryId === cat.id ? '#fff' : '#64748b' }}>{cat.name}</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
-
             {/* Inline search */}
-            <View
-              style={{
-                flex: 1,
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: '#f1f5f9',
-                borderRadius: 10,
-                paddingHorizontal: 10,
-                height: 36,
-                marginLeft: 8,
-                minWidth: 90,
-              }}
-            >
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 10, paddingHorizontal: 10, height: 36, marginLeft: 8, minWidth: 90 }}>
               <Feather name="search" size={14} color="#94a3b8" style={{ marginRight: 6 }} />
               <TextInput
                 style={{ flex: 1, fontSize: 13, color: '#1e1b4b', paddingVertical: 0 }}
@@ -812,67 +802,135 @@ export default function OrderScreen() {
           </View>
 
           {/* Product Grid */}
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 8, paddingBottom: 16 }} keyboardShouldPersistTaps="handled">
-            {(() => {
-              const q = menuSearchQuery.trim().toLowerCase();
-              const visible = q
-                ? products.filter((p) => p.name.toLowerCase().includes(q))
-                : products;
-              if (visible.length === 0) {
-                return (
+          {(() => {
+            const pendingByProduct: Record<string, number> = {};
+            for (const item of items) {
+              if (!item.voided && item.status === 'pending') {
+                pendingByProduct[item.productId] = (pendingByProduct[item.productId] || 0) + item.qty;
+              }
+            }
+            const q = menuSearchQuery.trim().toLowerCase();
+            const visible = q ? products.filter((p) => p.name.toLowerCase().includes(q)) : products;
+            return (
+              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 8, paddingBottom: 8 }} keyboardShouldPersistTaps="handled">
+                {visible.length === 0 ? (
                   <Text style={{ color: '#9ca3af', textAlign: 'center', marginTop: 40, fontSize: 14 }}>
                     {q ? `No items matching "${menuSearchQuery}"` : 'No items in this category'}
                   </Text>
-                );
-              }
-              return (
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                  {visible.map((prod) => {
-                    const outOfStock = prod.isOutOfStock || prod.stockQty <= 0;
-                    return (
-                      <TouchableOpacity
-                        key={prod.id}
-                        onPress={() => handleAddItem(prod)}
-                        disabled={outOfStock}
-                        style={{ width: `${100 / numCols}%`, padding: 4 }}
-                        activeOpacity={0.75}
-                      >
-                        <View
-                          style={{
-                            backgroundColor: outOfStock ? '#f1f5f9' : '#fff',
-                            borderRadius: 14,
-                            padding: 12,
-                            borderWidth: 2,
-                            borderColor: outOfStock ? '#e2e8f0' : '#f1f5f9',
-                            minHeight: 110,
-                            justifyContent: 'space-between',
-                            opacity: outOfStock ? 0.55 : 1,
-                          }}
+                ) : (
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                    {visible.map((prod) => {
+                      const outOfStock = prod.isOutOfStock || prod.stockQty <= 0;
+                      const qtyInOrder = pendingByProduct[prod.id] || 0;
+                      return (
+                        <TouchableOpacity
+                          key={prod.id}
+                          onPress={() => handleAddItem(prod)}
+                          disabled={outOfStock}
+                          style={{ width: `${100 / numCols}%`, padding: 4 }}
+                          activeOpacity={0.75}
                         >
-                          <Text style={{ fontSize: 26, marginBottom: 6 }}>
-                            {prod.name.charAt(0).toUpperCase()}
-                          </Text>
-                          <View>
-                            <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e1b4b' }} numberOfLines={2}>
-                              {prod.name}
-                            </Text>
-                            <Text style={{ fontSize: 13, fontWeight: '800', color: '#4338CA', marginTop: 2 }}>
-                              {formatKES(prod.price)}
-                            </Text>
-                            {outOfStock ? (
-                              <Text style={{ fontSize: 10, color: '#ef4444', marginTop: 2 }}>Out of stock</Text>
-                            ) : (
-                              <Text style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>{prod.stockQty} left</Text>
+                          <View style={{ backgroundColor: outOfStock ? '#f1f5f9' : '#fff', borderRadius: 14, padding: 12, borderWidth: 2, borderColor: qtyInOrder > 0 ? '#4338CA' : (outOfStock ? '#e2e8f0' : '#f1f5f9'), minHeight: 110, justifyContent: 'space-between', opacity: outOfStock ? 0.55 : 1 }}>
+                            {/* Qty badge */}
+                            {qtyInOrder > 0 && (
+                              <View style={{ position: 'absolute', top: 8, right: 8, backgroundColor: '#4338CA', borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}>
+                                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>{qtyInOrder}×</Text>
+                              </View>
                             )}
+                            <Text style={{ fontSize: 26, marginBottom: 6 }}>{prod.name.charAt(0).toUpperCase()}</Text>
+                            <View>
+                              <Text style={{ fontSize: 12, fontWeight: '700', color: '#1e1b4b' }} numberOfLines={2}>{prod.name}</Text>
+                              <Text style={{ fontSize: 13, fontWeight: '800', color: '#4338CA', marginTop: 2 }}>{formatKES(prod.price)}</Text>
+                              {outOfStock ? (
+                                <Text style={{ fontSize: 10, color: '#ef4444', marginTop: 2 }}>Out of stock</Text>
+                              ) : (
+                                <Text style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>{prod.stockQty} left</Text>
+                              )}
+                            </View>
                           </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </ScrollView>
+            );
+          })()}
+
+          {/* ── Mini Cart Strip ───────────────────────────────────────────── */}
+          {(() => {
+            const pendingItems = items.filter((i) => !i.voided && i.status === 'pending');
+            if (pendingItems.length === 0) return null;
+
+            const grouped: Record<string, { name: string; qty: number; unitPrice: number }> = {};
+            for (const item of pendingItems) {
+              if (!grouped[item.productId]) {
+                grouped[item.productId] = {
+                  name: productNames[item.productId] || '…',
+                  qty: 0,
+                  unitPrice: item.unitPrice,
+                };
+              }
+              grouped[item.productId].qty += item.qty;
+            }
+            const groupedList = Object.entries(grouped);
+            const cartTotal = groupedList.reduce((s, [, g]) => s + g.qty * g.unitPrice, 0);
+            const totalQty = groupedList.reduce((s, [, g]) => s + g.qty, 0);
+
+            return (
+              <View style={{ backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e2e8f0' }}>
+                {/* Summary row — tap to expand/collapse */}
+                <TouchableOpacity
+                  onPress={() => setCartExpanded((v) => !v)}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10 }}
+                >
+                  <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: '#4338CA', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>{totalQty}</Text>
+                  </View>
+                  <Text style={{ flex: 1, fontSize: 14, fontWeight: '700', color: '#1e1b4b' }}>{totalQty} item{totalQty !== 1 ? 's' : ''} in order</Text>
+                  <Text style={{ fontSize: 14, fontWeight: '800', color: '#4338CA', marginRight: 8 }}>{formatKES(cartTotal)}</Text>
+                  <Feather name={cartExpanded ? 'chevron-down' : 'chevron-up'} size={16} color="#64748b" />
+                </TouchableOpacity>
+
+                {/* Expanded item list */}
+                {cartExpanded && (
+                  <View style={{ paddingHorizontal: 12, paddingBottom: 12 }}>
+                    {groupedList.map(([productId, g]) => (
+                      <View key={productId} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
+                        <Text style={{ flex: 1, fontSize: 13, color: '#1e1b4b', fontWeight: '500' }} numberOfLines={1}>{g.name}</Text>
+                        <Text style={{ fontSize: 12, color: '#64748b', marginRight: 12, width: 60, textAlign: 'right' }}>{formatKES(g.qty * g.unitPrice)}</Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 8, paddingHorizontal: 2 }}>
+                          <TouchableOpacity
+                            onPress={async () => {
+                              if (!orderId || !currentStaff) return;
+                              await reduceOrderItem(orderId, productId, currentStaff.id);
+                              await loadOrder();
+                            }}
+                            style={{ padding: 6 }}
+                          >
+                            <Feather name="minus" size={14} color="#4338CA" />
+                          </TouchableOpacity>
+                          <Text style={{ fontSize: 14, fontWeight: '800', color: '#1e1b4b', minWidth: 20, textAlign: 'center' }}>{g.qty}</Text>
+                          <TouchableOpacity
+                            onPress={async () => {
+                              try {
+                                const prod = await database.get<ProductModel>('products').find(productId);
+                                await handleAddItem(prod);
+                              } catch {}
+                            }}
+                            style={{ padding: 6 }}
+                          >
+                            <Feather name="plus" size={14} color="#4338CA" />
+                          </TouchableOpacity>
                         </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              );
-            })()}
-          </ScrollView>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            );
+          })()}
+
         </SafeAreaView>
       </Modal>
 

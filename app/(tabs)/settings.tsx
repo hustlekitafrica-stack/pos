@@ -19,7 +19,7 @@ import {
   disconnectKitchenPrinter,
   type PrinterDevice,
 } from '@/lib/printer/connection';
-import { pushAllToSupabase, triggerAutoSync, type TablePushResult } from '@/lib/db/sync';
+import { pushAllToSupabase, triggerAutoSync, syncDatabase, type TablePushResult } from '@/lib/db/sync';
 import { seedDatabase } from '@/lib/db/seed';
 import { deleteStaff } from '@/lib/db/actions';
 import { Role } from '@/types';
@@ -61,6 +61,7 @@ export default function SettingsScreen() {
   // Sync
   const [syncing, setSyncing] = useState(false);
   const [syncResults, setSyncResults] = useState<TablePushResult[] | null>(null);
+  const [resetting, setResetting] = useState(false);
 
   // Settings store (logo + alert email)
   const logoUri = useSettingsStore((s) => s.logoUri);
@@ -211,6 +212,32 @@ export default function SettingsScreen() {
     const results = await pushAllToSupabase();
     setSyncResults(results);
     setSyncing(false);
+  };
+
+  const handleResetLocalData = () => {
+    Alert.alert(
+      'Reset Local Database',
+      'This will erase ALL local data and re-pull from the server. Make sure you are connected to the internet.\n\nThis cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset & Re-sync',
+          style: 'destructive',
+          onPress: async () => {
+            setResetting(true);
+            try {
+              await database.unsafeResetDatabase();
+              await syncDatabase();
+              Alert.alert('Done', 'Local data cleared and re-synced from server.');
+            } catch (e) {
+              Alert.alert('Error', 'Reset failed. Check your connection and try again.');
+            } finally {
+              setResetting(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleSeed = async () => {
@@ -516,6 +543,22 @@ export default function SettingsScreen() {
                 </TouchableOpacity>
               </View>
             )}
+
+            {/* Danger Zone */}
+            <View className="bg-white rounded-xl p-4 mb-4 border border-red-200">
+              <Text className="text-sm font-bold text-red-600 mb-1">Danger Zone</Text>
+              <Text className="text-xs text-gray-400 mb-3">Wipes local storage and re-pulls everything from the server.</Text>
+              <TouchableOpacity
+                className="border border-red-500 p-3 rounded-xl items-center"
+                onPress={handleResetLocalData}
+                disabled={resetting}
+              >
+                {resetting
+                  ? <ActivityIndicator color="#dc2626" />
+                  : <Text className="text-red-600 font-medium">Reset Local Data</Text>
+                }
+              </TouchableOpacity>
+            </View>
 
             {/* Logout */}
             <View className="bg-white rounded-xl p-4 mb-4 border border-gray-100">

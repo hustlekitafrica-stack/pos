@@ -356,6 +356,41 @@ export async function voidOrderItem(
   triggerAutoSync();
 }
 
+export async function reduceOrderItem(
+  orderId: string,
+  productId: string,
+  staffId: string
+): Promise<void> {
+  const pending = await database
+    .get<OrderItem>('order_items')
+    .query(
+      Q.where('order_id', orderId),
+      Q.where('product_id', productId),
+      Q.where('voided', false),
+      Q.where('status', 'pending')
+    )
+    .fetch();
+  if (pending.length === 0) return;
+  const item = pending[pending.length - 1]; // remove the most-recently added
+  if (item.qty > 1) {
+    await database.write(async () => {
+      await item.update((i) => { i.qty = i.qty - 1; });
+    });
+    await recalculateOrderTotal(orderId);
+  } else {
+    await database.write(async () => {
+      await item.update((i) => {
+        i.voided = true;
+        i.voidReason = 'Removed from order';
+        i.voidedBy = staffId;
+        i.status = 'voided';
+      });
+    });
+    await recalculateOrderTotal(orderId);
+  }
+  triggerAutoSync();
+}
+
 // ─── Payments ───────────────────────────────────────────────────────────────
 
 export async function recordPayment(data: {
