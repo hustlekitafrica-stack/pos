@@ -26,7 +26,7 @@
 | Payments | M-Pesa Daraja STK Push via Node/Express on Railway |
 | Receipt printing | 2x Bluetooth 58mm ESC/POS thermal printers (bar + kitchen) |
 | Low-stock alerts | Supabase Edge Function + email provider (e.g. Resend) |
-| Expense receipt scan | Anthropic Claude vision API |
+| Expense receipt scan | OpenAI gpt-4o vision API |
 | Reports/charts | react-native-chart-kit or Victory Native |
 | Navigation | Expo Router (file-based) |
 
@@ -50,7 +50,7 @@
 - [x] Card payment recording
 - [x] Split bill / split payment
 - [x] Credit sales module (customer registration, credit checkout, repayments, debtors list)
-- [x] Expense tracking (manual + AI receipt scan via Claude Vision)
+- [x] Expense tracking (manual + AI receipt scan via OpenAI gpt-4o Vision)
 - [x] Stock Manager role + stock adjustment workflow
 - [x] Menu management CRUD (categories + products)
 

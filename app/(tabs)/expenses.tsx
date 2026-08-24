@@ -106,6 +106,23 @@ export default function ExpensesScreen() {
   const [vendorName, setVendorName]       = useState('');
   const [receiptImageUrl, setReceiptImageUrl] = useState<string | null>(null);
 
+  // Scanning loading state
+  const [isScanning, setIsScanning]         = useState(false);
+
+  // Scan review (multi-item)
+  const [showScanReview, setShowScanReview] = useState(false);
+  const [scanVendor, setScanVendor]         = useState('');
+  const [scanDate, setScanDate]             = useState('');
+  const [scannedItems, setScannedItems]     = useState<Array<{
+    description: string; amount: string; catId: string;
+  }>>([]);
+  const [savingScanned, setSavingScanned]   = useState(false);
+
+  // Manual category management
+  const [showAddCat, setShowAddCat]   = useState(false);
+  const [newCatName, setNewCatName]   = useState('');
+  const [savingCat, setSavingCat]     = useState(false);
+
   const currentStaff = useAuthStore((s) => s.currentStaff);
 
   // ── data loading ──────────────────────────────────────────────────────────
@@ -156,7 +173,7 @@ export default function ExpensesScreen() {
 
   // ── form helpers ──────────────────────────────────────────────────────────
 
-  const resetForm = () => { setDescription(''); setAmount(''); setPaidBy(''); setVendorName(''); setReceiptImageUrl(null); };
+  const resetForm = () => { setDescription(''); setAmount(''); setPaidBy(''); setVendorName(''); setReceiptImageUrl(null); setSelectedCatId(categories[0]?.id || ''); };
   const openAdd   = () => { resetForm(); setShowAdd(true); };
 
   const handleAddExpense = async () => {
@@ -191,18 +208,92 @@ export default function ExpensesScreen() {
     setShowAdd(false);
     const base64 = await captureReceiptImage();
     if (!base64) { Alert.alert('Camera', 'Could not capture image'); return; }
-    Alert.alert('Scanning…', 'Analysing receipt with AI…');
-    const result = await scanReceipt(base64);
-    if (!result) { Alert.alert('Scan failed', 'Could not parse receipt. Try manual entry.'); setShowAdd(true); return; }
-    if (result.imageUrl) setReceiptImageUrl(result.imageUrl);
-    setDescription(result.items.map((i: any) => i.description).join(', ') || 'Scanned expense');
-    setAmount(String((result.totalAmount || 0) / 100));
-    setVendorName(result.vendorName || '');
-    if (result.category) {
-      const match = categories.find((c) => c.name.toLowerCase().includes(result.category!.toLowerCase()));
-      if (match) setSelectedCatId(match.id);
+    setIsScanning(true);
+    let result;
+    try {
+      result = await scanReceipt(base64);
+    } finally {
+      setIsScanning(false);
     }
-    setShowAdd(true);
+    if (!result) { Alert.alert('Scan unavailable', 'Receipt scanning requires a server connection. Please add the expense manually.', [{ text: 'OK', onPress: () => setShowAdd(true) }]); return; }
+    if (result.imageUrl) setReceiptImageUrl(result.imageUrl);
+
+    if (result.items && result.items.length > 0) {
+      const mapped = result.items.map((item: any) => {
+        let catId = categories[0]?.id || '';
+        if (item.category) {
+          const match = categories.find((c) =>
+            c.name.toLowerCase().includes(item.category.toLowerCase()) ||
+            item.category.toLowerCase().includes(c.name.toLowerCase())
+          );
+          if (match) catId = match.id;
+        }
+        return {
+          description: item.description || '',
+          amount: String(Math.round((item.amount || 0) / 100)),
+          catId,
+        };
+      });
+      setScannedItems(mapped);
+      setScanVendor(result.vendorName || '');
+      setScanDate(result.date || new Date().toISOString().split('T')[0]);
+      setShowScanReview(true);
+    } else {
+      setDescription('Scanned expense');
+      setAmount(String((result.totalAmount || 0) / 100));
+      setVendorName(result.vendorName || '');
+      setShowAdd(true);
+    }
+  };
+
+  const handleSaveScannedItems = async () => {
+    const valid = scannedItems.filter((i) => i.description.trim() && parseFloat(i.amount) > 0 && i.catId);
+    if (valid.length === 0) { Alert.alert('Nothing to save', 'Add at least one item with a description and amount.'); return; }
+    setSavingScanned(true);
+    try {
+      await database.write(async () => {
+        for (const item of valid) {
+          await database.get<Expense>('expenses').create((e) => {
+            e.categoryId      = item.catId;
+            e.description     = item.description.trim();
+            e.amount          = toCents(parseFloat(item.amount));
+            e.paidBy          = currentStaff!.name;
+            e.loggedBy        = currentStaff!.id;
+            e.expenseDate     = scanDate || new Date().toISOString().split('T')[0];
+            e.receiptPhotoUrl = receiptImageUrl;
+            e.source          = 'scanned';
+            e.vendorName      = scanVendor.trim() || null;
+          });
+        }
+      });
+      triggerAutoSync();
+      await loadData();
+      setShowScanReview(false);
+      setScannedItems([]);
+      setReceiptImageUrl(null);
+      Alert.alert('Saved', `${valid.length} expense${valid.length !== 1 ? 's' : ''} recorded.`);
+    } finally {
+      setSavingScanned(false);
+    }
+  };
+
+  const handleAddCategory = async () => {
+    if (!newCatName.trim()) return;
+    setSavingCat(true);
+    try {
+      const created = await database.write(async () =>
+        database.get<ExpenseCategory>('expense_categories').create((c) => {
+          c.name = newCatName.trim();
+        })
+      );
+      triggerAutoSync();
+      setNewCatName('');
+      setShowAddCat(false);
+      await loadData();
+      setSelectedCatId(created.id);
+    } finally {
+      setSavingCat(false);
+    }
   };
 
   // ── assistant helpers ─────────────────────────────────────────────────────
@@ -579,6 +670,17 @@ export default function ExpensesScreen() {
 
       </SafeAreaView>
 
+      {/* ── Scanning overlay ──────────────────────────────────────────────── */}
+      <Modal visible={isScanning} transparent animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 20, padding: 32, alignItems: 'center', minWidth: 200 }}>
+            <ActivityIndicator size="large" color={INDIGO} />
+            <Text style={{ marginTop: 16, fontSize: 15, fontWeight: '700', color: INDIGO_D }}>Analysing receipt…</Text>
+            <Text style={{ marginTop: 6, fontSize: 13, color: MUTED }}>This may take a few seconds</Text>
+          </View>
+        </View>
+      </Modal>
+
       {/* ── Add Expense Modal ─────────────────────────────────────────────── */}
       <Modal visible={showAdd} transparent animationType="slide">
         <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' }}>
@@ -598,7 +700,13 @@ export default function ExpensesScreen() {
               <Text style={{ fontSize: 13, fontWeight: '600', color: INDIGO, marginLeft: 10 }}>Scan a receipt instead</Text>
             </TouchableOpacity>
 
-            <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 8 }}>Category</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', letterSpacing: 0.8, textTransform: 'uppercase' }}>Category</Text>
+              <TouchableOpacity onPress={() => setShowAddCat(true)} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Feather name="plus-circle" size={13} color={INDIGO} />
+                <Text style={{ fontSize: 12, color: INDIGO, fontWeight: '600', marginLeft: 4 }}>Add category</Text>
+              </TouchableOpacity>
+            </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
               <View style={{ flexDirection: 'row', gap: 8 }}>
                 {categories.map((cat) => (
@@ -651,6 +759,125 @@ export default function ExpensesScreen() {
             >
               <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800' }}>Save Expense</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Scan Review Modal (one expense per scanned item) ──────────── */}
+      <Modal visible={showScanReview} animationType="slide">
+        <SafeAreaView style={{ flex: 1, backgroundColor: BG }} edges={['top']}>
+          <View style={{ backgroundColor: INDIGO_D, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 }}>
+            <View>
+              <Text style={{ color: '#fff', fontSize: 17, fontWeight: '700' }}>Review Scanned Items</Text>
+              {scanVendor ? <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12, marginTop: 1 }}>{scanVendor} · {scanDate}</Text> : null}
+            </View>
+            <TouchableOpacity onPress={() => setShowScanReview(false)}>
+              <Feather name="x" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
+            <Text style={{ fontSize: 12, color: MUTED, marginBottom: 12 }}>
+              Each item will be saved as a separate expense. Edit description, category or amount before saving.
+            </Text>
+
+            {scannedItems.map((item, idx) => (
+              <View key={idx} style={{ backgroundColor: '#fff', borderRadius: 16, padding: 14, marginBottom: 12, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 6, elevation: 2 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.6 }}>Item {idx + 1}</Text>
+                  <TouchableOpacity onPress={() => setScannedItems(prev => prev.filter((_, i) => i !== idx))}>
+                    <Feather name="trash-2" size={15} color="#ef4444" />
+                  </TouchableOpacity>
+                </View>
+
+                <TextInput
+                  style={{ borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 10, padding: 10, fontSize: 14, color: INDIGO_D, marginBottom: 10 }}
+                  value={item.description}
+                  onChangeText={(v) => setScannedItems(prev => prev.map((x, i) => i === idx ? { ...x, description: v } : x))}
+                  placeholder="Description"
+                  placeholderTextColor={MUTED}
+                />
+
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>Category</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }} keyboardShouldPersistTaps="handled">
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {categories.map((cat) => (
+                      <TouchableOpacity
+                        key={cat.id}
+                        onPress={() => setScannedItems(prev => prev.map((x, i) => i === idx ? { ...x, catId: cat.id } : x))}
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 18, backgroundColor: item.catId === cat.id ? INDIGO : '#F1F5F9' }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: item.catId === cat.id ? '#fff' : '#475569' }}>{cat.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+
+                <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 }}>
+                  <Text style={{ fontSize: 13, color: MUTED, marginRight: 6 }}>KES</Text>
+                  <TextInput
+                    style={{ flex: 1, fontSize: 15, fontWeight: '700', color: INDIGO_D }}
+                    value={item.amount}
+                    onChangeText={(v) => setScannedItems(prev => prev.map((x, i) => i === idx ? { ...x, amount: v } : x))}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    placeholderTextColor={MUTED}
+                  />
+                </View>
+              </View>
+            ))}
+
+            <TouchableOpacity
+              onPress={() => setScannedItems(prev => [...prev, { description: '', amount: '', catId: categories[0]?.id || '' }])}
+              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: INDIGO, borderRadius: 12, paddingVertical: 12, marginBottom: 16, borderStyle: 'dashed' }}
+            >
+              <Feather name="plus" size={16} color={INDIGO} />
+              <Text style={{ color: INDIGO, fontWeight: '600', marginLeft: 6 }}>Add Item</Text>
+            </TouchableOpacity>
+          </ScrollView>
+
+          <View style={{ backgroundColor: '#fff', paddingHorizontal: 16, paddingTop: 12, paddingBottom: 28, borderTopWidth: 1, borderTopColor: '#E2E8F0' }}>
+            <TouchableOpacity
+              onPress={handleSaveScannedItems}
+              disabled={savingScanned}
+              style={{ backgroundColor: savingScanned ? '#94A3B8' : INDIGO, borderRadius: 14, paddingVertical: 15, alignItems: 'center' }}
+            >
+              {savingScanned
+                ? <ActivityIndicator color="#fff" />
+                : <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800' }}>Save {scannedItems.filter(i => i.description.trim()).length} Expense{scannedItems.filter(i => i.description.trim()).length !== 1 ? 's' : ''}</Text>
+              }
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ── Add Category Modal ────────────────────────────────────────── */}
+      <Modal visible={showAddCat} transparent animationType="fade">
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', padding: 32 }}>
+          <View style={{ backgroundColor: '#fff', borderRadius: 20, padding: 24, width: '100%', maxWidth: 340 }}>
+            <Text style={{ fontSize: 16, fontWeight: '800', color: INDIGO_D, marginBottom: 16 }}>New Expense Category</Text>
+            <TextInput
+              style={{ borderWidth: 1.5, borderColor: '#E2E8F0', borderRadius: 12, padding: 12, fontSize: 15, color: INDIGO_D, marginBottom: 20 }}
+              value={newCatName}
+              onChangeText={setNewCatName}
+              placeholder="e.g. Marketing"
+              placeholderTextColor={MUTED}
+              autoFocus
+              returnKeyType="done"
+              onSubmitEditing={handleAddCategory}
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10 }}>
+              <TouchableOpacity onPress={() => { setShowAddCat(false); setNewCatName(''); }} style={{ paddingHorizontal: 16, paddingVertical: 10 }}>
+                <Text style={{ color: MUTED, fontSize: 14 }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleAddCategory}
+                disabled={savingCat || !newCatName.trim()}
+                style={{ backgroundColor: newCatName.trim() ? INDIGO : '#CBD5E1', borderRadius: 10, paddingHorizontal: 20, paddingVertical: 10 }}
+              >
+                {savingCat ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Add</Text>}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>

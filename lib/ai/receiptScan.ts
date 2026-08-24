@@ -1,10 +1,8 @@
-import { SUPABASE_CONFIG } from '@/constants/config';
 import { supabase as _supabase } from '../supabase';
-const supabase = _supabase!;
 
 export interface ReceiptScanResult {
   vendorName: string | null;
-  items: Array<{ description: string; amount: number }>;
+  items: Array<{ description: string; amount: number; category?: string }>;
   totalAmount: number;
   date: string | null;
   category: string | null;
@@ -12,37 +10,48 @@ export interface ReceiptScanResult {
 }
 
 /**
- * Scan a receipt photo using Claude Vision API via Supabase Edge Function.
- * The Edge Function handles the Anthropic API key and call.
+ * Scan a receipt photo using OpenAI gpt-4o Vision via Supabase Edge Function.
+ * The Edge Function handles the OPENAI_API_KEY secret and API call.
  *
  * @param base64Image - Base64-encoded image data
  * @returns Parsed receipt data
  */
 export async function scanReceipt(base64Image: string): Promise<ReceiptScanResult | null> {
+  if (!_supabase) {
+    console.warn('scanReceipt: Supabase not configured — set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in .env');
+    return null;
+  }
   try {
-    const { data, error } = await supabase.functions.invoke('scan-receipt', {
+    const { data, error } = await _supabase.functions.invoke('scan-receipt', {
       body: {
         image: base64Image,
         prompt: `Analyze this receipt image and extract:
 1. Vendor/store name
-2. Each line item with description and amount in KES
+2. Each line item with description, amount in KES, and a suggested category for that item
 3. Total amount in KES
 4. Date of purchase
-5. Suggested expense category (one of: Supplies/Stock, Salaries, Utilities, Rent, Transport, Maintenance, Other)
+
+For each item's category, choose the best match from: Supplies/Stock, Salaries, Utilities, Rent, Transport, Maintenance, Other
 
 Return JSON with this exact structure:
 {
   "vendorName": "string or null",
-  "items": [{"description": "string", "amount": number_in_kes_cents}],
+  "items": [{"description": "string", "amount": number_in_kes_cents, "category": "string"}],
   "totalAmount": number_in_kes_cents,
-  "date": "YYYY-MM-DD or null",
-  "category": "string or null"
+  "date": "YYYY-MM-DD or null"
 }`,
       },
     });
 
     if (error) {
       console.warn('Receipt scan error:', error);
+      return null;
+    }
+
+    // Guard: some Supabase client versions surface non-2xx response bodies as
+    // `data` (with error=null) instead of setting `error`.
+    if (data && typeof (data as any).error === 'string') {
+      console.warn('Receipt scan returned error field:', (data as any).error);
       return null;
     }
 
