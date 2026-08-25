@@ -1,25 +1,20 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuthStore } from '@/stores/authStore';
 import { findStaffByPin, getActiveShift } from '@/lib/db/actions';
 import { seedDatabase } from '@/lib/db/seed';
-import { database } from '@/lib/db';
 
 export default function LoginScreen() {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [seeding, setSeeding] = useState(true);
-  const [staffCount, setStaffCount] = useState<number | null>(null);
   const login = useAuthStore((s) => s.login);
 
   useEffect(() => {
-    seedDatabase().then(async () => {
-      const count = await database.get('staff').query().fetchCount();
-      setStaffCount(count);
-    }).finally(() => setSeeding(false));
+    seedDatabase().finally(() => setSeeding(false));
   }, []);
 
   const handlePinPress = (digit: string) => {
@@ -108,16 +103,12 @@ export default function LoginScreen() {
         <View className="flex-row mb-3">{pinDots}</View>
 
         {/* Error or loading state */}
-        <View className="justify-center mb-6">
+        <View className="h-7 justify-center mb-6">
           {loading ? (
             <ActivityIndicator color="#4338CA" />
           ) : error ? (
             <Text className="text-accent text-sm text-center">{error}</Text>
-          ) : staffCount === 0 ? (
-            <Text className="text-yellow-400 text-xs text-center px-4">
-              No accounts found.{'\n'}Sync from cloud in Settings → System → Reset Local Data, or ask your administrator.
-            </Text>
-          ) : <View className="h-7" />}
+          ) : null}
         </View>
 
         {/* Numpad */}
