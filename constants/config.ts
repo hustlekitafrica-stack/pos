@@ -11,16 +11,6 @@ export const SUPABASE_CONFIG = {
   anonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '',
 };
 
-export const EXPENSE_CATEGORIES = [
-  'Supplies/Stock',
-  'Salaries',
-  'Utilities',
-  'Rent',
-  'Transport',
-  'Maintenance',
-  'Other',
-] as const;
-
 export const ORDER_STATUSES = ['open', 'sent', 'served', 'paid', 'closed', 'voided'] as const;
 
 export const TABLE_STATUSES = ['free', 'open', 'awaiting_payment'] as const;
