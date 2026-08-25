@@ -20,7 +20,6 @@ import {
   type PrinterDevice,
 } from '@/lib/printer/connection';
 import { pushAllToSupabase, triggerAutoSync, syncDatabase, type TablePushResult } from '@/lib/db/sync';
-import { seedDatabase } from '@/lib/db/seed';
 import { deleteStaff } from '@/lib/db/actions';
 import { Role } from '@/types';
 import { hashPin } from '@/lib/auth/pin';
@@ -238,20 +237,6 @@ export default function SettingsScreen() {
         },
       ]
     );
-  };
-
-  const handleSeed = async () => {
-    Alert.alert('Seed Data', 'This will add demo data. Continue?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Seed',
-        onPress: async () => {
-          await seedDatabase();
-          Alert.alert('Done', 'Seed data loaded');
-          await loadStaff();
-        },
-      },
-    ]);
   };
 
   const roles: { key: Role; label: string }[] = [
@@ -534,12 +519,6 @@ export default function SettingsScreen() {
                   onPress={() => router.push('/admin/end-of-day')}
                 >
                   <Text className="text-white font-medium text-sm">End of Day</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  className="bg-gray-500 p-3 rounded-xl items-center"
-                  onPress={handleSeed}
-                >
-                  <Text className="text-white font-medium text-sm">Seed Data</Text>
                 </TouchableOpacity>
               </View>
             )}

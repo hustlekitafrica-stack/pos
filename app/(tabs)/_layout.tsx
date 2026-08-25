@@ -10,7 +10,6 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="index" />
       <Tabs.Screen name="sell" />
-      <Tabs.Screen name="tables" />
       <Tabs.Screen name="orders" />
       <Tabs.Screen name="menu" />
       <Tabs.Screen name="reports" />
