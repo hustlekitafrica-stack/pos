@@ -140,8 +140,14 @@ export default function StockScreen() {
       .query(Q.where('prep_station', station))
       .fetch();
     const header = 'name,category,selling price,cost price,unit,initial stock';
-    const sampleRows = cats.map((c) => `,${c.name.replace(/,/g, '')},,,,`);
-    const csv = [header, ...sampleRows].join('\n');
+    // One realistic example row so the user can see the expected format
+    const exampleCat = cats[0]?.name.replace(/,/g, '') ?? (station === 'bar' ? 'Beers' : 'Mains');
+    const exampleRow = station === 'bar'
+      ? `Tusker Lager,${exampleCat},200,140,bottle,24`
+      : `Chips,${exampleCat},150,60,portion,20`;
+    // One placeholder row per category showing valid category names
+    const categoryRows = cats.map((c) => `,${c.name.replace(/,/g, '')},,,,`);
+    const csv = [header, exampleRow, ...categoryRows].join('\n');
     const filename = `${station}_products_template.csv`;
     const path = FileSystem.cacheDirectory + filename;
     await FileSystem.writeAsStringAsync(path, csv, { encoding: FileSystem.EncodingType.UTF8 });
@@ -177,9 +183,16 @@ export default function StockScreen() {
         Alert.alert('Invalid CSV', 'Required columns: name, category, selling price, cost price, unit, initial stock');
         return;
       }
+      // Auto-detect station from filename (bar_products_template.csv / kitchen_products_template.csv)
+      // Falls back to the currently active station toggle if the filename gives no hint.
+      const fileName = (result.assets[0].name ?? '').toLowerCase();
+      const detectedStation: 'bar' | 'kitchen' =
+        fileName.includes('kitchen') ? 'kitchen' :
+        fileName.includes('bar')     ? 'bar'     :
+        activeStation;
       const stationCats = await database
         .get<Category>('categories')
-        .query(Q.where('prep_station', activeStation))
+        .query(Q.where('prep_station', detectedStation))
         .fetch();
       const catMap: Record<string, string> = {};
       for (const c of stationCats) catMap[c.name.toLowerCase()] = c.id;
@@ -225,7 +238,8 @@ export default function StockScreen() {
         existingNames.add(name.toLowerCase());
         created++;
       }
-      Alert.alert('Import Complete', `Created: ${created}  ·  Skipped: ${skipped}`);
+      const stationLabel = detectedStation === 'bar' ? 'Bar' : 'Kitchen';
+      Alert.alert('Import Complete', `Station: ${stationLabel}\nCreated: ${created}  ·  Skipped: ${skipped}`);
       triggerAutoSync();
       await loadProducts();
     } catch (e: any) {
