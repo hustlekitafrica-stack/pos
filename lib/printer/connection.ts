@@ -25,24 +25,42 @@ let kitchenCharUuid: string | null = null;
 let barDisconnectSub: any = null;
 let kitchenDisconnectSub: any = null;
 
-// Known service/characteristic pairs for BLE thermal printers, tried in order.
-// The correct pair is determined at connect time by checking which characteristics
-// the printer actually exposes.
-const PRINTER_PROFILES = [
+// ─── Printer profiles ──────────────────────────────────────────────────────
+// Tried in order at connection time. The first profile whose characteristic
+// is confirmed writable on the device is used for all subsequent writes.
+//
+// UUIDs verified against nRF Connect scan of the P502A-3E3A printer:
+//   Service e7810a71-73ae-499d-8c15-faa9aef0c3f2
+//     Char  bef8d6c9-9c21-4c9e-b632-bd58c1009f9f  WRITE + WRITE NO RESPONSE
+//   Service 49535343-fe7d-4ae5-8fa9-9fafd205e455   (ISSC Transparent UART)
+//     Char  49535343-8841-43f4-a8d4-ecbe34729bb3   WRITE NO RESPONSE
+//     Char  49535343-1e4d-4bd9-ba61-23c647249616   NOTIFY (TX — must subscribe)
+//   Service 0x18F0
+//     Char  0x2AF1  WRITE + WRITE NO RESPONSE
+const PRINTER_PROFILES: Array<{
+  label: string;
+  service: string;
+  char: string;
+  txNotifyChar?: string;   // ISSC: subscribe to this to activate the UART write path
+}> = [
   {
-    label: 'ISSC Transparent UART',
-    service: '49535343-fe7d-4ae5-8fa9-9fafd205e455',
-    char:    '49535343-8841-43f4-a8d4-ecbe34729bb3',
+    // Primary print channel confirmed by nRF Connect (Image 2)
+    label:   'Vendor print e7810a71',
+    service: 'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+    char:    'bef8d6c9-9c21-4c9e-b632-bd58c1009f9f',
   },
   {
-    label: 'Standard Thermal 0x18F0/0x2AF1',
+    // ISSC Transparent UART — needs TX notification enabled to activate RX path
+    label:        'ISSC UART',
+    service:      '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+    char:         '49535343-8841-43f4-a8d4-ecbe34729bb3',
+    txNotifyChar: '49535343-1e4d-4bd9-ba61-23c647249616',
+  },
+  {
+    // Standard thermal fallback
+    label:   'Standard 0x18F0/0x2AF1',
     service: '000018f0-0000-1000-8000-00805f9b34fb',
     char:    '00002af1-0000-1000-8000-00805f9b34fb',
-  },
-  {
-    label: 'Standard Thermal 0x18F0/0x2AF0',
-    service: '000018f0-0000-1000-8000-00805f9b34fb',
-    char:    '00002af0-0000-1000-8000-00805f9b34fb',
   },
 ];
 
@@ -98,30 +116,52 @@ export async function scanForPrinters(timeoutMs = 5000): Promise<PrinterDevice[]
 }
 
 /**
- * Probe the connected device to find which service/characteristic it uses for printing.
- * Returns the first matching pair, or falls back to the first profile.
+ * Probe the connected device to find which service/characteristic it uses for
+ * printing. Returns the first profile whose characteristic is confirmed
+ * writable, or falls back to the first profile if none is confirmed.
+ *
+ * For the ISSC UART profile, also subscribes to the TX notification
+ * characteristic — this activates the UART receive path in the ISSC module,
+ * without which writes to the RX characteristic are silently dropped.
  */
 async function discoverPrintCharacteristic(
   device: any,
 ): Promise<{ serviceUuid: string; charUuid: string }> {
   for (const profile of PRINTER_PROFILES) {
     try {
-      const chars = await device.characteristicsForService(profile.service);
+      const chars: any[] = await device.characteristicsForService(profile.service);
       const match = chars.find(
-        (c: any) =>
+        (c) =>
           c.uuid.toLowerCase() === profile.char.toLowerCase() &&
           (c.isWritableWithoutResponse || c.isWritableWithResponse),
       );
       if (match) {
-        console.log(`Printer using profile: ${profile.label}`);
+        console.log(`Printer: using profile "${profile.label}"`);
+
+        // For ISSC UART, subscribe to TX notifications to activate the UART path
+        if (profile.txNotifyChar) {
+          try {
+            device.monitorCharacteristicForService(
+              profile.service,
+              profile.txNotifyChar,
+              () => {},   // we only need the subscription active, not the data
+            );
+            // Give the subscription a moment to register before the first write
+            await new Promise<void>((r) => setTimeout(r, 300));
+          } catch {
+            // Non-fatal — proceed anyway
+          }
+        }
+
         return { serviceUuid: profile.service, charUuid: profile.char };
       }
     } catch {
       // Service not present on this device — try next profile
     }
   }
-  // Last resort: return first profile even if not confirmed
-  console.warn('Could not confirm any print profile — defaulting to first');
+
+  // Last resort: use first profile even if not confirmed
+  console.warn('Printer: no known profile matched — defaulting to first profile');
   return { serviceUuid: PRINTER_PROFILES[0].service, charUuid: PRINTER_PROFILES[0].char };
 }
 
@@ -230,8 +270,7 @@ export async function disconnectKitchenPrinter(): Promise<void> {
 }
 
 /**
- * Ensure a printer is connected, auto-reconnecting if needed.
- * Returns device + chunk size + UUIDs, or null if unavailable.
+ * Ensure a printer is connected, auto-reconnecting if the BLE link dropped.
  */
 async function getConnectedDevice(): Promise<{
   device: any;
@@ -251,9 +290,9 @@ async function getConnectedDevice(): Promise<{
   const savedAddress = store.barPrinterAddress ?? store.kitchenPrinterAddress;
   if (!savedAddress) return null;
 
-  console.log('Printer disconnected — attempting auto-reconnect to', savedAddress);
-  const reconnected = await connectBarPrinter(savedAddress);
-  if (reconnected && barPeripheral && barServiceUuid && barCharUuid) {
+  console.log('Printer disconnected — auto-reconnecting to', savedAddress);
+  const ok = await connectBarPrinter(savedAddress);
+  if (ok && barPeripheral && barServiceUuid && barCharUuid) {
     return { device: barPeripheral, chunkSz: barMtu, serviceUuid: barServiceUuid, charUuid: barCharUuid };
   }
 
@@ -261,8 +300,7 @@ async function getConnectedDevice(): Promise<{
 }
 
 /**
- * Write ESC/POS data in MTU-sized chunks.
- * Uses the service/characteristic pair discovered at connection time.
+ * Write ESC/POS data in MTU-sized chunks to the printer.
  */
 async function writeChunks(
   device: any,
@@ -274,7 +312,7 @@ async function writeChunks(
   for (let offset = 0; offset < data.length; offset += chunkSz) {
     const chunk  = data.slice(offset, offset + chunkSz);
     const base64 = uint8ToBase64(chunk);
-    // Try write-without-response first; fall back to write-with-response
+    // Try write-without-response first (faster); fall back to write-with-response
     try {
       await device.writeCharacteristicWithoutResponseForService(serviceUuid, charUuid, base64);
     } catch {
@@ -289,8 +327,6 @@ async function writeChunks(
 /**
  * Send raw ESC/POS bytes to a connected printer.
  * Auto-reconnects if the BLE link dropped since last use.
- * @param target 'bar' or 'kitchen'  (uses whichever printer is connected)
- * @param data ESC/POS command buffer as Uint8Array
  * @returns true on success, false if no printer could be reached
  */
 export async function sendToPrinter(target: 'bar' | 'kitchen', data: Uint8Array): Promise<boolean> {
@@ -311,17 +347,16 @@ export async function sendToPrinter(target: 'bar' | 'kitchen', data: Uint8Array)
 }
 
 /**
- * Send a short test string to the connected printer.
- * Use this from Settings to verify the printer is reachable and responding.
+ * Send a short test page to verify the printer is connected and responding.
  * @returns 'ok' | 'not_connected' | 'write_failed'
  */
 export async function testPrint(): Promise<'ok' | 'not_connected' | 'write_failed'> {
   const conn = await getConnectedDevice();
   if (!conn) return 'not_connected';
 
-  // Simple printable text with paper feed — no ESC/POS formatting so even
-  // printers with limited command support will print something.
-  const text = 'TEST PRINT\r\n' +
+  // Plain text + paper feed — works on any ESC/POS printer regardless of command support
+  const text = '\x1b\x40' +          // ESC @ — initialize printer
+               'TEST PRINT\r\n' +
                'Printer OK\r\n' +
                '\r\n\r\n\r\n';
   const data = new TextEncoder().encode(text);
