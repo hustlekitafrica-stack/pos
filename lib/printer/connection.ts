@@ -186,6 +186,10 @@ async function connectToDevice(
 
   const { serviceUuid, charUuid } = await discoverPrintCharacteristic(device);
 
+  // Give the printer firmware time to finish initializing before the first write.
+  // Some printers silently discard data that arrives immediately after GATT setup.
+  await new Promise<void>((r) => setTimeout(r, 500));
+
   return { device, mtu, serviceUuid, charUuid };
 }
 
@@ -312,11 +316,13 @@ async function writeChunks(
   for (let offset = 0; offset < data.length; offset += chunkSz) {
     const chunk  = data.slice(offset, offset + chunkSz);
     const base64 = uint8ToBase64(chunk);
-    // Try write-without-response first (faster); fall back to write-with-response
+    // Write With Response first — waits for printer ACK, enforces security level
+    // (required when the device is bonded). Falls back to Write Without Response
+    // for characteristics that only support that mode (e.g. ISSC UART RX char).
     try {
-      await device.writeCharacteristicWithoutResponseForService(serviceUuid, charUuid, base64);
-    } catch {
       await device.writeCharacteristicWithResponseForService(serviceUuid, charUuid, base64);
+    } catch {
+      await device.writeCharacteristicWithoutResponseForService(serviceUuid, charUuid, base64);
     }
     if (offset + chunkSz < data.length) {
       await new Promise<void>((r) => setTimeout(r, 10));
