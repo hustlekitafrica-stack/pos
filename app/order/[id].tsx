@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, Alert, Modal, TextInput, Platform, useWindowDimensions } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, Alert, Modal, TextInput, Platform, useWindowDimensions, ActivityIndicator } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router, useFocusEffect } from 'expo-router';
@@ -63,6 +63,8 @@ export default function OrderScreen() {
   // Merge bills
   const [showMergeBills, setShowMergeBills] = useState(false);
   const [mergeableOrders, setMergeableOrders] = useState<{ order: OrderModel; tableName: string; itemCount: number }[]>([]);
+  const [printingSlip, setPrintingSlip] = useState(false);
+  const [printingReceipt, setPrintingReceipt] = useState(false);
   const [categories, setCategories] = useState<CategoryModel[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductModel[]>([]);
@@ -167,6 +169,7 @@ export default function OrderScreen() {
 
     // Route items to bar/kitchen printers
     try {
+      setPrintingSlip(true);
       const categoryCache: Record<string, CategoryModel | null> = {};
       const getCat = (productId: string) => categoryCache[productId] ?? null;
 
@@ -186,6 +189,7 @@ export default function OrderScreen() {
       const routed = routeOrderItems(pendingItems, getCat);
       const tName = tableName || 'Table';
       const clientLabel = clientId || undefined;
+      const printJobs: Promise<boolean>[] = [];
 
       if (routed.bar.length > 0) {
         const slip = buildOrderSlip(
@@ -194,10 +198,7 @@ export default function OrderScreen() {
           'bar',
           clientLabel
         );
-        const bytes = new TextEncoder().encode(slip);
-        sendToPrinter('bar', bytes).then((ok) => {
-          if (!ok) Alert.alert('Printer', 'Order slip not sent. Please connect a printer in Settings → Printers.');
-        }).catch(() => {});
+        printJobs.push(sendToPrinter('bar', new TextEncoder().encode(slip)));
       }
 
       if (routed.kitchen.length > 0) {
@@ -207,13 +208,19 @@ export default function OrderScreen() {
           'kitchen',
           clientLabel
         );
-        const bytes = new TextEncoder().encode(slip);
-        sendToPrinter('kitchen', bytes).then((ok) => {
-          if (!ok) Alert.alert('Printer', 'Kitchen slip not sent. Please connect a printer in Settings → Printers.');
-        }).catch(() => {});
+        printJobs.push(sendToPrinter('kitchen', new TextEncoder().encode(slip)));
+      }
+
+      if (printJobs.length > 0) {
+        const results = await Promise.all(printJobs);
+        if (results.some((ok) => !ok)) {
+          Alert.alert('Printer', 'Order saved but slips did not print. Check printer in Settings → Printers.');
+        }
       }
     } catch {
       // Printer failure is non-fatal
+    } finally {
+      setPrintingSlip(false);
     }
 
     router.replace('/(tabs)/orders');
@@ -412,13 +419,15 @@ export default function OrderScreen() {
       '',
     ].filter((l) => l !== null).join('\n');
 
+    setPrintingReceipt(true);
     // sendToPrinter returns false on failure — it never throws
     const ok = await sendToPrinter('bar', new TextEncoder().encode(lines));
+    setPrintingReceipt(false);
     if (!silent) {
       if (ok) {
-        Alert.alert('Sent', 'Receipt sent to printer');
+        Alert.alert('Sent', 'Receipt sent to printer.');
       } else {
-        Alert.alert('Printer Error', 'Could not reach printer. Please connect in Settings → Printers.');
+        Alert.alert('Printer Error', 'Could not reach printer. Connect in Settings → Printers.');
       }
     }
   };
@@ -716,15 +725,20 @@ export default function OrderScreen() {
             <TouchableOpacity
               className="flex-1 bg-yellow-500 p-3 rounded-xl items-center mr-2"
               onPress={handleSendOrder}
+              disabled={printingSlip}
             >
-              <View style={{ position: 'relative', alignItems: 'center', justifyContent: 'center' }}>
-                <Feather name="send" size={20} color="#fff" />
-                {pendingCount > 0 && (
-                  <View style={{ position: 'absolute', top: -8, right: -12, backgroundColor: '#dc2626', borderRadius: 8, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2 }}>
-                    <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>{pendingCount}</Text>
-                  </View>
-                )}
-              </View>
+              {printingSlip ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <View style={{ position: 'relative', alignItems: 'center', justifyContent: 'center' }}>
+                  <Feather name="send" size={20} color="#fff" />
+                  {pendingCount > 0 && (
+                    <View style={{ position: 'absolute', top: -8, right: -12, backgroundColor: '#dc2626', borderRadius: 8, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 2 }}>
+                      <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>{pendingCount}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
             </TouchableOpacity>
           )}
 
@@ -733,9 +747,13 @@ export default function OrderScreen() {
           {activeItems.length > 0 && (
             <TouchableOpacity
               className="bg-indigo-500 p-3 rounded-xl items-center mr-2 mb-2 px-4"
-              onPress={handlePrintReceipt}
+              onPress={() => handlePrintReceipt()}
+              disabled={printingReceipt}
             >
-              <Feather name="printer" size={20} color="#fff" />
+              {printingReceipt
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <Feather name="printer" size={20} color="#fff" />
+              }
             </TouchableOpacity>
           )}
 

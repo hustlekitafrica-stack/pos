@@ -1,4 +1,4 @@
-const { withProjectBuildGradle, withGradleProperties } = require('@expo/config-plugins');
+const { withProjectBuildGradle, withGradleProperties, withAndroidManifest } = require('@expo/config-plugins');
 
 const SUPPRESS_FLAG = 'suppressKotlinVersionCompatibilityCheck';
 
@@ -30,6 +30,30 @@ subprojects {
     if (!keys.includes('systemProp.org.gradle.internal.http.connectionTimeout')) {
       props.push({ type: 'property', key: 'systemProp.org.gradle.internal.http.connectionTimeout', value: '120000' });
     }
+    return cfg;
+  });
+
+  // Add Classic Bluetooth permissions required by react-native-bluetooth-classic.
+  // Android 12+ permissions (BLUETOOTH_SCAN, BLUETOOTH_CONNECT) come from react-native-ble-plx.
+  // The legacy permissions below are required for Android < 12.
+  config = withAndroidManifest(config, (cfg) => {
+    const manifest = cfg.modResults.manifest;
+    const usesPermission = manifest['uses-permission'] || [];
+
+    const addPermission = (name, extraAttrs = {}) => {
+      const exists = usesPermission.find(
+        (p) => p.$?.['android:name'] === name
+      );
+      if (!exists) {
+        usesPermission.push({ $: { 'android:name': name, ...extraAttrs } });
+      }
+    };
+
+    // Classic BT legacy permissions (capped at SDK 30 so they don't apply on Android 12+)
+    addPermission('android.permission.BLUETOOTH',       { 'android:maxSdkVersion': '30' });
+    addPermission('android.permission.BLUETOOTH_ADMIN', { 'android:maxSdkVersion': '30' });
+
+    manifest['uses-permission'] = usesPermission;
     return cfg;
   });
 

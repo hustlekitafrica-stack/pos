@@ -257,6 +257,8 @@ export default function SellScreen() {
 
         const routed = routeOrderItems(sentItems, (pid) => categoryCache[pid] ?? null);
 
+        const printJobs: Promise<boolean>[] = [];
+
         if (routed.bar.length > 0) {
           const slip = buildOrderSlip(
             table.name,
@@ -264,9 +266,7 @@ export default function SellScreen() {
             'bar',
             identifier !== 'Counter' ? identifier : undefined
           );
-          sendToPrinter('bar', new TextEncoder().encode(slip)).then((ok) => {
-            if (!ok) Alert.alert('Printer', 'Order slip not sent. Please connect a printer in Settings → Printers.');
-          }).catch(() => {});
+          printJobs.push(sendToPrinter('bar', new TextEncoder().encode(slip)));
         }
         if (routed.kitchen.length > 0) {
           const slip = buildOrderSlip(
@@ -275,9 +275,14 @@ export default function SellScreen() {
             'kitchen',
             identifier !== 'Counter' ? identifier : undefined
           );
-          sendToPrinter('kitchen', new TextEncoder().encode(slip)).then((ok) => {
-            if (!ok) Alert.alert('Printer', 'Kitchen slip not sent. Please connect a printer in Settings → Printers.');
-          }).catch(() => {});
+          printJobs.push(sendToPrinter('kitchen', new TextEncoder().encode(slip)));
+        }
+
+        if (printJobs.length > 0) {
+          const results = await Promise.all(printJobs);
+          if (results.some((ok) => !ok)) {
+            Alert.alert('Printer', 'Order saved but one or more slips did not print. Check printer in Settings → Printers.');
+          }
         }
       } catch {
         // Printer failure is non-fatal
