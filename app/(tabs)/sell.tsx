@@ -264,7 +264,9 @@ export default function SellScreen() {
             'bar',
             identifier !== 'Counter' ? identifier : undefined
           );
-          sendToPrinter('bar', new TextEncoder().encode(slip)).catch(() => {});
+          sendToPrinter('bar', new TextEncoder().encode(slip)).then((ok) => {
+            if (!ok) Alert.alert('Printer', 'Order slip not sent. Please connect a printer in Settings → Printers.');
+          }).catch(() => {});
         }
         if (routed.kitchen.length > 0) {
           const slip = buildOrderSlip(
@@ -273,7 +275,9 @@ export default function SellScreen() {
             'kitchen',
             identifier !== 'Counter' ? identifier : undefined
           );
-          sendToPrinter('kitchen', new TextEncoder().encode(slip)).catch(() => {});
+          sendToPrinter('kitchen', new TextEncoder().encode(slip)).then((ok) => {
+            if (!ok) Alert.alert('Printer', 'Kitchen slip not sent. Please connect a printer in Settings → Printers.');
+          }).catch(() => {});
         }
       } catch {
         // Printer failure is non-fatal

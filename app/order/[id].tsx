@@ -195,7 +195,9 @@ export default function OrderScreen() {
           clientLabel
         );
         const bytes = new TextEncoder().encode(slip);
-        sendToPrinter('bar', bytes).catch(() => {});
+        sendToPrinter('bar', bytes).then((ok) => {
+          if (!ok) Alert.alert('Printer', 'Order slip not sent. Please connect a printer in Settings → Printers.');
+        }).catch(() => {});
       }
 
       if (routed.kitchen.length > 0) {
@@ -206,7 +208,9 @@ export default function OrderScreen() {
           clientLabel
         );
         const bytes = new TextEncoder().encode(slip);
-        sendToPrinter('kitchen', bytes).catch(() => {});
+        sendToPrinter('kitchen', bytes).then((ok) => {
+          if (!ok) Alert.alert('Printer', 'Kitchen slip not sent. Please connect a printer in Settings → Printers.');
+        }).catch(() => {});
       }
     } catch {
       // Printer failure is non-fatal
@@ -244,7 +248,7 @@ export default function OrderScreen() {
       amount: order.totalAmount,
     });
     setShowPayment(false);
-    handlePrintReceipt().catch(() => {});
+    handlePrintReceipt(true).catch(() => {});
     Alert.alert('Payment Recorded', 'Cash payment successful');
     router.back();
   };
@@ -305,7 +309,7 @@ export default function OrderScreen() {
       amount: order.totalAmount,
     });
     setShowPayment(false);
-    handlePrintReceipt().catch(() => {});
+    handlePrintReceipt(true).catch(() => {});
     Alert.alert('Payment Recorded', 'Card payment recorded');
     router.back();
   };
@@ -391,26 +395,31 @@ export default function OrderScreen() {
     router.back();
   };
 
-  const handlePrintReceipt = async () => {
+  // silent=true suppresses alerts (used for auto-print after payment)
+  const handlePrintReceipt = async (silent = false) => {
     if (!order) return;
-    try {
-      const lines = [
-        '================================',
-        `  ${tableName}`,
-        clientId ? `  ${clientId}` : '',
-        '================================',
-        ...activeItems.map((item) =>
-          `${String(item.qty).padEnd(3)} ${(productNames[item.productId] || '').substring(0, 18).padEnd(18)} ${item.isComplimentary ? 'FREE' : formatKES(item.unitPrice * item.qty)}`
-        ),
-        '--------------------------------',
-        `TOTAL: ${formatKES(order.totalAmount)}`,
-        '================================',
-        '',
-      ].filter((l) => l !== null).join('\n');
-      await sendToPrinter('bar', new TextEncoder().encode(lines));
-      Alert.alert('Sent', 'Receipt sent to bar printer');
-    } catch {
-      Alert.alert('Error', 'Could not reach bar printer');
+    const lines = [
+      '================================',
+      `  ${tableName}`,
+      clientId ? `  ${clientId}` : '',
+      '================================',
+      ...activeItems.map((item) =>
+        `${String(item.qty).padEnd(3)} ${(productNames[item.productId] || '').substring(0, 18).padEnd(18)} ${item.isComplimentary ? 'FREE' : formatKES(item.unitPrice * item.qty)}`
+      ),
+      '--------------------------------',
+      `TOTAL: ${formatKES(order.totalAmount)}`,
+      '================================',
+      '',
+    ].filter((l) => l !== null).join('\n');
+
+    // sendToPrinter returns false on failure — it never throws
+    const ok = await sendToPrinter('bar', new TextEncoder().encode(lines));
+    if (!silent) {
+      if (ok) {
+        Alert.alert('Sent', 'Receipt sent to printer');
+      } else {
+        Alert.alert('Printer Error', 'Could not reach printer. Please connect in Settings → Printers.');
+      }
     }
   };
 
