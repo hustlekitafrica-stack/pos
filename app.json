@@ -29,14 +29,21 @@
         {
           "android": {
             "kotlinVersion": "1.9.25",
-            "abiFilters": ["arm64-v8a", "armeabi-v7a"],
+            "abiFilters": [
+              "arm64-v8a",
+              "armeabi-v7a"
+            ],
             "packagingOptions": {
-              "pickFirst": ["**/libc++_shared.so", "**/libfbjni.so"]
+              "pickFirst": [
+                "**/libc++_shared.so",
+                "**/libfbjni.so"
+              ]
             }
           }
         }
       ],
-      "./plugins/withBuildFixes"
+      "./plugins/withBuildFixes",
+      "react-native-ble-plx"
     ],
     "web": {
       "bundler": "metro",
