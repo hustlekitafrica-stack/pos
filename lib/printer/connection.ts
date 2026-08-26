@@ -11,15 +11,40 @@ try {
 let manager: any = null;
 let barPeripheral: any = null;
 let kitchenPeripheral: any = null;
-let barMtu = 20;      // negotiated MTU payload size for bar printer
-let kitchenMtu = 20;  // negotiated MTU payload size for kitchen printer
+let barMtu = 20;
+let kitchenMtu = 20;
 
-// Keep subscription references alive to prevent garbage collection
+// Discovered service + characteristic UUIDs for each printer slot.
+// connectToDevice probes the printer to find the correct write channel.
+let barServiceUuid: string | null = null;
+let barCharUuid: string | null = null;
+let kitchenServiceUuid: string | null = null;
+let kitchenCharUuid: string | null = null;
+
+// Subscription references kept alive to prevent garbage collection
 let barDisconnectSub: any = null;
 let kitchenDisconnectSub: any = null;
 
-const PRINTER_SERVICE_UUID = '000018f0-0000-1000-8000-00805f9b34fb';
-const PRINTER_CHAR_UUID    = '00002af1-0000-1000-8000-00805f9b34fb';
+// Known service/characteristic pairs for BLE thermal printers, tried in order.
+// The correct pair is determined at connect time by checking which characteristics
+// the printer actually exposes.
+const PRINTER_PROFILES = [
+  {
+    label: 'ISSC Transparent UART',
+    service: '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+    char:    '49535343-8841-43f4-a8d4-ecbe34729bb3',
+  },
+  {
+    label: 'Standard Thermal 0x18F0/0x2AF1',
+    service: '000018f0-0000-1000-8000-00805f9b34fb',
+    char:    '00002af1-0000-1000-8000-00805f9b34fb',
+  },
+  {
+    label: 'Standard Thermal 0x18F0/0x2AF0',
+    service: '000018f0-0000-1000-8000-00805f9b34fb',
+    char:    '00002af0-0000-1000-8000-00805f9b34fb',
+  },
+];
 
 function getManager() {
   if (!manager && BleManager) {
@@ -72,7 +97,37 @@ export async function scanForPrinters(timeoutMs = 5000): Promise<PrinterDevice[]
   });
 }
 
-async function connectToDevice(address: string): Promise<{ device: any; mtu: number }> {
+/**
+ * Probe the connected device to find which service/characteristic it uses for printing.
+ * Returns the first matching pair, or falls back to the first profile.
+ */
+async function discoverPrintCharacteristic(
+  device: any,
+): Promise<{ serviceUuid: string; charUuid: string }> {
+  for (const profile of PRINTER_PROFILES) {
+    try {
+      const chars = await device.characteristicsForService(profile.service);
+      const match = chars.find(
+        (c: any) =>
+          c.uuid.toLowerCase() === profile.char.toLowerCase() &&
+          (c.isWritableWithoutResponse || c.isWritableWithResponse),
+      );
+      if (match) {
+        console.log(`Printer using profile: ${profile.label}`);
+        return { serviceUuid: profile.service, charUuid: profile.char };
+      }
+    } catch {
+      // Service not present on this device — try next profile
+    }
+  }
+  // Last resort: return first profile even if not confirmed
+  console.warn('Could not confirm any print profile — defaulting to first');
+  return { serviceUuid: PRINTER_PROFILES[0].service, charUuid: PRINTER_PROFILES[0].char };
+}
+
+async function connectToDevice(
+  address: string,
+): Promise<{ device: any; mtu: number; serviceUuid: string; charUuid: string }> {
   const mgr = getManager();
   if (!mgr) throw new Error('BLE not available');
 
@@ -89,20 +144,25 @@ async function connectToDevice(address: string): Promise<{ device: any; mtu: num
     // Device doesn't support MTU negotiation — stay at safe 20-byte default
   }
 
-  return { device, mtu };
+  const { serviceUuid, charUuid } = await discoverPrintCharacteristic(device);
+
+  return { device, mtu, serviceUuid, charUuid };
 }
 
 export async function connectBarPrinter(address: string): Promise<boolean> {
   try {
-    const { device, mtu } = await connectToDevice(address);
-    barPeripheral = device;
-    barMtu = mtu;
+    const { device, mtu, serviceUuid, charUuid } = await connectToDevice(address);
+    barPeripheral  = device;
+    barMtu         = mtu;
+    barServiceUuid = serviceUuid;
+    barCharUuid    = charUuid;
 
-    // Remove any previous subscription before creating a new one
     if (barDisconnectSub) { try { barDisconnectSub.remove(); } catch {} }
     barDisconnectSub = device.onDisconnected(() => {
-      barPeripheral = null;
-      barMtu = 20;
+      barPeripheral  = null;
+      barMtu         = 20;
+      barServiceUuid = null;
+      barCharUuid    = null;
       barDisconnectSub = null;
       usePrinterStore.getState().setBarPrinter(address, false);
     });
@@ -117,14 +177,18 @@ export async function connectBarPrinter(address: string): Promise<boolean> {
 
 export async function connectKitchenPrinter(address: string): Promise<boolean> {
   try {
-    const { device, mtu } = await connectToDevice(address);
-    kitchenPeripheral = device;
-    kitchenMtu = mtu;
+    const { device, mtu, serviceUuid, charUuid } = await connectToDevice(address);
+    kitchenPeripheral  = device;
+    kitchenMtu         = mtu;
+    kitchenServiceUuid = serviceUuid;
+    kitchenCharUuid    = charUuid;
 
     if (kitchenDisconnectSub) { try { kitchenDisconnectSub.remove(); } catch {} }
     kitchenDisconnectSub = device.onDisconnected(() => {
-      kitchenPeripheral = null;
-      kitchenMtu = 20;
+      kitchenPeripheral  = null;
+      kitchenMtu         = 20;
+      kitchenServiceUuid = null;
+      kitchenCharUuid    = null;
       kitchenDisconnectSub = null;
       usePrinterStore.getState().setKitchenPrinter(address, false);
     });
@@ -139,55 +203,93 @@ export async function connectKitchenPrinter(address: string): Promise<boolean> {
 
 export async function disconnectBarPrinter(): Promise<void> {
   const store = usePrinterStore.getState();
-  const savedAddress = store.barPrinterAddress; // preserve address for re-connect
+  const savedAddress = store.barPrinterAddress;
   if (barDisconnectSub) { try { barDisconnectSub.remove(); } catch {} barDisconnectSub = null; }
   if (barPeripheral) {
     try { await barPeripheral.cancelConnection(); } catch {}
-    barPeripheral = null;
-    barMtu = 20;
+    barPeripheral  = null;
+    barMtu         = 20;
+    barServiceUuid = null;
+    barCharUuid    = null;
   }
   store.setBarPrinter(savedAddress, false);
 }
 
 export async function disconnectKitchenPrinter(): Promise<void> {
   const store = usePrinterStore.getState();
-  const savedAddress = store.kitchenPrinterAddress; // preserve address for re-connect
+  const savedAddress = store.kitchenPrinterAddress;
   if (kitchenDisconnectSub) { try { kitchenDisconnectSub.remove(); } catch {} kitchenDisconnectSub = null; }
   if (kitchenPeripheral) {
     try { await kitchenPeripheral.cancelConnection(); } catch {}
-    kitchenPeripheral = null;
-    kitchenMtu = 20;
+    kitchenPeripheral  = null;
+    kitchenMtu         = 20;
+    kitchenServiceUuid = null;
+    kitchenCharUuid    = null;
   }
   store.setKitchenPrinter(savedAddress, false);
 }
 
 /**
  * Ensure a printer is connected, auto-reconnecting if needed.
- * Returns the device + chunk size, or null if unavailable.
+ * Returns device + chunk size + UUIDs, or null if unavailable.
  */
-async function getConnectedDevice(): Promise<{ device: any; chunkSz: number } | null> {
-  // Use whichever peripheral is currently live
-  if (barPeripheral)     return { device: barPeripheral,     chunkSz: barMtu };
-  if (kitchenPeripheral) return { device: kitchenPeripheral, chunkSz: kitchenMtu };
+async function getConnectedDevice(): Promise<{
+  device: any;
+  chunkSz: number;
+  serviceUuid: string;
+  charUuid: string;
+} | null> {
+  if (barPeripheral && barServiceUuid && barCharUuid) {
+    return { device: barPeripheral, chunkSz: barMtu, serviceUuid: barServiceUuid, charUuid: barCharUuid };
+  }
+  if (kitchenPeripheral && kitchenServiceUuid && kitchenCharUuid) {
+    return { device: kitchenPeripheral, chunkSz: kitchenMtu, serviceUuid: kitchenServiceUuid, charUuid: kitchenCharUuid };
+  }
 
-  // Nothing connected — try to auto-reconnect using the saved address
+  // Auto-reconnect using the saved address
   const store = usePrinterStore.getState();
   const savedAddress = store.barPrinterAddress ?? store.kitchenPrinterAddress;
   if (!savedAddress) return null;
 
   console.log('Printer disconnected — attempting auto-reconnect to', savedAddress);
   const reconnected = await connectBarPrinter(savedAddress);
-  if (reconnected && barPeripheral) {
-    return { device: barPeripheral, chunkSz: barMtu };
+  if (reconnected && barPeripheral && barServiceUuid && barCharUuid) {
+    return { device: barPeripheral, chunkSz: barMtu, serviceUuid: barServiceUuid, charUuid: barCharUuid };
   }
 
   return null;
 }
 
 /**
+ * Write ESC/POS data in MTU-sized chunks.
+ * Uses the service/characteristic pair discovered at connection time.
+ */
+async function writeChunks(
+  device: any,
+  serviceUuid: string,
+  charUuid: string,
+  data: Uint8Array,
+  chunkSz: number,
+): Promise<void> {
+  for (let offset = 0; offset < data.length; offset += chunkSz) {
+    const chunk  = data.slice(offset, offset + chunkSz);
+    const base64 = uint8ToBase64(chunk);
+    // Try write-without-response first; fall back to write-with-response
+    try {
+      await device.writeCharacteristicWithoutResponseForService(serviceUuid, charUuid, base64);
+    } catch {
+      await device.writeCharacteristicWithResponseForService(serviceUuid, charUuid, base64);
+    }
+    if (offset + chunkSz < data.length) {
+      await new Promise<void>((r) => setTimeout(r, 10));
+    }
+  }
+}
+
+/**
  * Send raw ESC/POS bytes to a connected printer.
  * Auto-reconnects if the BLE link dropped since last use.
- * @param target 'bar' or 'kitchen'  (falls back to whichever is connected)
+ * @param target 'bar' or 'kitchen'  (uses whichever printer is connected)
  * @param data ESC/POS command buffer as Uint8Array
  * @returns true on success, false if no printer could be reached
  */
@@ -197,23 +299,10 @@ export async function sendToPrinter(target: 'bar' | 'kitchen', data: Uint8Array)
     console.warn('sendToPrinter: no printer connected and auto-reconnect failed');
     return false;
   }
-  const { device, chunkSz } = conn;
+  const { device, chunkSz, serviceUuid, charUuid } = conn;
 
   try {
-    // Send data in MTU-sized chunks so we never exceed the BLE payload limit.
-    // A 10 ms pause between chunks prevents overflowing the printer's receive buffer.
-    for (let offset = 0; offset < data.length; offset += chunkSz) {
-      const chunk  = data.slice(offset, offset + chunkSz);
-      const base64 = uint8ToBase64(chunk);
-      await device.writeCharacteristicWithoutResponseForService(
-        PRINTER_SERVICE_UUID,
-        PRINTER_CHAR_UUID,
-        base64
-      );
-      if (offset + chunkSz < data.length) {
-        await new Promise<void>((r) => setTimeout(r, 10));
-      }
-    }
+    await writeChunks(device, serviceUuid, charUuid, data, chunkSz);
     return true;
   } catch (e) {
     console.warn(`Print to ${target} failed:`, e);
@@ -230,13 +319,20 @@ export async function testPrint(): Promise<'ok' | 'not_connected' | 'write_faile
   const conn = await getConnectedDevice();
   if (!conn) return 'not_connected';
 
-  const text = '\x1b\x61\x01' +   // center
-               '** TEST PRINT **\n' +
-               'Printer is working!\n' +
-               '\n\n\n';
+  // Simple printable text with paper feed — no ESC/POS formatting so even
+  // printers with limited command support will print something.
+  const text = 'TEST PRINT\r\n' +
+               'Printer OK\r\n' +
+               '\r\n\r\n\r\n';
   const data = new TextEncoder().encode(text);
-  const ok = await sendToPrinter('bar', data);
-  return ok ? 'ok' : 'write_failed';
+
+  try {
+    await writeChunks(conn.device, conn.serviceUuid, conn.charUuid, data, conn.chunkSz);
+    return 'ok';
+  } catch (e) {
+    console.warn('testPrint write failed:', e);
+    return 'write_failed';
+  }
 }
 
 function uint8ToBase64(bytes: Uint8Array): string {
