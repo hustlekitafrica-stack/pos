@@ -14,8 +14,12 @@ let kitchenPeripheral: any = null;
 let barMtu = 20;      // negotiated MTU payload size for bar printer
 let kitchenMtu = 20;  // negotiated MTU payload size for kitchen printer
 
+// Keep subscription references alive to prevent garbage collection
+let barDisconnectSub: any = null;
+let kitchenDisconnectSub: any = null;
+
 const PRINTER_SERVICE_UUID = '000018f0-0000-1000-8000-00805f9b34fb';
-const PRINTER_CHAR_UUID = '00002af1-0000-1000-8000-00805f9b34fb';
+const PRINTER_CHAR_UUID    = '00002af1-0000-1000-8000-00805f9b34fb';
 
 function getManager() {
   if (!manager && BleManager) {
@@ -94,12 +98,12 @@ export async function connectBarPrinter(address: string): Promise<boolean> {
     barPeripheral = device;
     barMtu = mtu;
 
-    // Automatically clear the peripheral reference when the BLE link drops,
-    // so sendToPrinter reports "not connected" instead of a cryptic write error,
-    // and the Settings UI shows the correct disconnected state.
-    device.onDisconnected(() => {
+    // Remove any previous subscription before creating a new one
+    if (barDisconnectSub) { try { barDisconnectSub.remove(); } catch {} }
+    barDisconnectSub = device.onDisconnected(() => {
       barPeripheral = null;
       barMtu = 20;
+      barDisconnectSub = null;
       usePrinterStore.getState().setBarPrinter(address, false);
     });
 
@@ -117,9 +121,11 @@ export async function connectKitchenPrinter(address: string): Promise<boolean> {
     kitchenPeripheral = device;
     kitchenMtu = mtu;
 
-    device.onDisconnected(() => {
+    if (kitchenDisconnectSub) { try { kitchenDisconnectSub.remove(); } catch {} }
+    kitchenDisconnectSub = device.onDisconnected(() => {
       kitchenPeripheral = null;
       kitchenMtu = 20;
+      kitchenDisconnectSub = null;
       usePrinterStore.getState().setKitchenPrinter(address, false);
     });
 
@@ -134,8 +140,9 @@ export async function connectKitchenPrinter(address: string): Promise<boolean> {
 export async function disconnectBarPrinter(): Promise<void> {
   const store = usePrinterStore.getState();
   const savedAddress = store.barPrinterAddress; // preserve address for re-connect
+  if (barDisconnectSub) { try { barDisconnectSub.remove(); } catch {} barDisconnectSub = null; }
   if (barPeripheral) {
-    try { await barPeripheral.cancelConnection(); } catch (e) {}
+    try { await barPeripheral.cancelConnection(); } catch {}
     barPeripheral = null;
     barMtu = 20;
   }
@@ -145,8 +152,9 @@ export async function disconnectBarPrinter(): Promise<void> {
 export async function disconnectKitchenPrinter(): Promise<void> {
   const store = usePrinterStore.getState();
   const savedAddress = store.kitchenPrinterAddress; // preserve address for re-connect
+  if (kitchenDisconnectSub) { try { kitchenDisconnectSub.remove(); } catch {} kitchenDisconnectSub = null; }
   if (kitchenPeripheral) {
-    try { await kitchenPeripheral.cancelConnection(); } catch (e) {}
+    try { await kitchenPeripheral.cancelConnection(); } catch {}
     kitchenPeripheral = null;
     kitchenMtu = 20;
   }
@@ -154,30 +162,46 @@ export async function disconnectKitchenPrinter(): Promise<void> {
 }
 
 /**
+ * Ensure a printer is connected, auto-reconnecting if needed.
+ * Returns the device + chunk size, or null if unavailable.
+ */
+async function getConnectedDevice(): Promise<{ device: any; chunkSz: number } | null> {
+  // Use whichever peripheral is currently live
+  if (barPeripheral)     return { device: barPeripheral,     chunkSz: barMtu };
+  if (kitchenPeripheral) return { device: kitchenPeripheral, chunkSz: kitchenMtu };
+
+  // Nothing connected — try to auto-reconnect using the saved address
+  const store = usePrinterStore.getState();
+  const savedAddress = store.barPrinterAddress ?? store.kitchenPrinterAddress;
+  if (!savedAddress) return null;
+
+  console.log('Printer disconnected — attempting auto-reconnect to', savedAddress);
+  const reconnected = await connectBarPrinter(savedAddress);
+  if (reconnected && barPeripheral) {
+    return { device: barPeripheral, chunkSz: barMtu };
+  }
+
+  return null;
+}
+
+/**
  * Send raw ESC/POS bytes to a connected printer.
- * @param target 'bar' or 'kitchen'
+ * Auto-reconnects if the BLE link dropped since last use.
+ * @param target 'bar' or 'kitchen'  (falls back to whichever is connected)
  * @param data ESC/POS command buffer as Uint8Array
- * @returns true on success, false if no printer is connected or write failed
+ * @returns true on success, false if no printer could be reached
  */
 export async function sendToPrinter(target: 'bar' | 'kitchen', data: Uint8Array): Promise<boolean> {
-  // Use the requested printer; fall back to the other if it is not connected.
-  // This lets a single physical printer handle both bar and kitchen slips.
-  let device  = target === 'bar' ? barPeripheral  : kitchenPeripheral;
-  let chunkSz = target === 'bar' ? barMtu         : kitchenMtu;
-
-  if (!device) {
-    device  = target === 'bar' ? kitchenPeripheral : barPeripheral;
-    chunkSz = target === 'bar' ? kitchenMtu        : barMtu;
-  }
-
-  if (!device) {
-    console.warn(`${target} printer not connected (no fallback available)`);
+  const conn = await getConnectedDevice();
+  if (!conn) {
+    console.warn('sendToPrinter: no printer connected and auto-reconnect failed');
     return false;
   }
+  const { device, chunkSz } = conn;
 
   try {
     // Send data in MTU-sized chunks so we never exceed the BLE payload limit.
-    // A 5 ms pause between chunks prevents overflowing the printer's receive buffer.
+    // A 10 ms pause between chunks prevents overflowing the printer's receive buffer.
     for (let offset = 0; offset < data.length; offset += chunkSz) {
       const chunk  = data.slice(offset, offset + chunkSz);
       const base64 = uint8ToBase64(chunk);
@@ -187,7 +211,7 @@ export async function sendToPrinter(target: 'bar' | 'kitchen', data: Uint8Array)
         base64
       );
       if (offset + chunkSz < data.length) {
-        await new Promise<void>((r) => setTimeout(r, 5));
+        await new Promise<void>((r) => setTimeout(r, 10));
       }
     }
     return true;
@@ -195,6 +219,24 @@ export async function sendToPrinter(target: 'bar' | 'kitchen', data: Uint8Array)
     console.warn(`Print to ${target} failed:`, e);
     return false;
   }
+}
+
+/**
+ * Send a short test string to the connected printer.
+ * Use this from Settings to verify the printer is reachable and responding.
+ * @returns 'ok' | 'not_connected' | 'write_failed'
+ */
+export async function testPrint(): Promise<'ok' | 'not_connected' | 'write_failed'> {
+  const conn = await getConnectedDevice();
+  if (!conn) return 'not_connected';
+
+  const text = '\x1b\x61\x01' +   // center
+               '** TEST PRINT **\n' +
+               'Printer is working!\n' +
+               '\n\n\n';
+  const data = new TextEncoder().encode(text);
+  const ok = await sendToPrinter('bar', data);
+  return ok ? 'ok' : 'write_failed';
 }
 
 function uint8ToBase64(bytes: Uint8Array): string {

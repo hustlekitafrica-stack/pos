@@ -17,6 +17,7 @@ import {
   connectKitchenPrinter,
   disconnectBarPrinter,
   disconnectKitchenPrinter,
+  testPrint,
   type PrinterDevice,
 } from '@/lib/printer/connection';
 import { pushAllToSupabase, triggerAutoSync, syncDatabase, type TablePushResult } from '@/lib/db/sync';
@@ -54,6 +55,7 @@ export default function SettingsScreen() {
   const barAddress = usePrinterStore((s) => s.barPrinterAddress);
   const kitchenAddress = usePrinterStore((s) => s.kitchenPrinterAddress);
   const [scanning, setScanning] = useState(false);
+  const [testPrinting, setTestPrinting] = useState(false);
   const [discoveredPrinters, setDiscoveredPrinters] = useState<PrinterDevice[]>([]);
   const [showPrinterPicker, setShowPrinterPicker] = useState<'bar' | 'kitchen' | null>(null);
 
@@ -203,6 +205,19 @@ export default function SettingsScreen() {
       success ? 'Connected' : 'Failed',
       success ? `${target} printer connected: ${device.name}` : `Could not connect to ${device.name}`
     );
+  };
+
+  const handleTestPrint = async () => {
+    setTestPrinting(true);
+    const result = await testPrint();
+    setTestPrinting(false);
+    if (result === 'ok') {
+      Alert.alert('Test Print OK', 'The printer received the test and should have printed. If no paper came out, the service/characteristic UUID may be wrong — please contact support.');
+    } else if (result === 'not_connected') {
+      Alert.alert('Not Connected', 'No printer is connected. Go to Bar Printer or Kitchen Printer below and tap Scan & Connect first.');
+    } else {
+      Alert.alert('Write Failed', 'The printer was found but the write command was rejected. The printer may use a different characteristic UUID. Please try reconnecting or contact support.');
+    }
   };
 
   const handleSync = async () => {
@@ -444,7 +459,7 @@ export default function SettingsScreen() {
               </View>
 
               {/* Kitchen Printer */}
-              <View className="flex-row items-center justify-between">
+              <View className="flex-row items-center justify-between mb-4 pb-4 border-b border-gray-100">
                 <View>
                   <Text className="text-sm font-medium text-gray-700">Kitchen Printer</Text>
                   <Text className={`text-xs mt-0.5 ${kitchenConnected ? 'text-green-600' : 'text-gray-400'}`}>
@@ -460,6 +475,26 @@ export default function SettingsScreen() {
                     <Text className="text-white text-xs font-medium">Scan & Connect</Text>
                   </TouchableOpacity>
                 )}
+              </View>
+
+              {/* Test Print */}
+              <View className="flex-row items-center justify-between">
+                <View style={{ flex: 1, marginRight: 12 }}>
+                  <Text className="text-sm font-medium text-gray-700">Test Print</Text>
+                  <Text className="text-xs mt-0.5 text-gray-400">
+                    Sends a test page to verify the printer is working correctly.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  className="bg-indigo-100 px-3 py-1.5 rounded-lg"
+                  onPress={handleTestPrint}
+                  disabled={testPrinting}
+                >
+                  {testPrinting
+                    ? <ActivityIndicator size="small" color="#4338CA" />
+                    : <Text className="text-indigo-700 text-xs font-medium">Test Print</Text>
+                  }
+                </TouchableOpacity>
               </View>
             </View>
           </>
