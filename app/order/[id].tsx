@@ -10,8 +10,9 @@ import { Order as OrderModel, OrderItem as OrderItemModel, Product as ProductMod
 import { initiateSTKPush, checkSTKStatus } from '@/lib/mpesa';
 import { Q } from '@nozbe/watermelondb';
 import { routeOrderItems } from '@/lib/printer/routeOrder';
-import { buildOrderSlip } from '@/lib/printer/templates';
+import { buildOrderSlip, buildCustomerReceipt } from '@/lib/printer/templates';
 import { sendToPrinter } from '@/lib/printer/connection';
+import { useSettingsStore } from '@/stores/settingsStore';
 import {
   getOrderItems,
   addItemToOrder,
@@ -32,6 +33,7 @@ export default function OrderScreen() {
   const { id: orderId } = useLocalSearchParams<{ id: string }>();
   const currentStaff = useAuthStore((s) => s.currentStaff);
   const can = useAuthStore((s) => s.can);
+  const { venueName, venuePhone, venueAddress, mpesaPaybill } = useSettingsStore();
 
   const { width } = useWindowDimensions();
   const numCols = width >= 600 ? 3 : 2;
@@ -65,6 +67,7 @@ export default function OrderScreen() {
   const [mergeableOrders, setMergeableOrders] = useState<{ order: OrderModel; tableName: string; itemCount: number }[]>([]);
   const [printingSlip, setPrintingSlip] = useState(false);
   const [printingReceipt, setPrintingReceipt] = useState(false);
+  const [lastMpesaRef, setLastMpesaRef] = useState<string | undefined>();
   const [categories, setCategories] = useState<CategoryModel[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductModel[]>([]);
@@ -291,6 +294,7 @@ export default function OrderScreen() {
             amount: order.totalAmount,
             mpesaRef: status.mpesaReceiptNumber,
           });
+          setLastMpesaRef(status.mpesaReceiptNumber);
           setMpesaLoading(false);
           setShowMpesa(false);
           setShowPayment(false);
@@ -405,23 +409,29 @@ export default function OrderScreen() {
   // silent=true suppresses alerts (used for auto-print after payment)
   const handlePrintReceipt = async (silent = false) => {
     if (!order) return;
-    const lines = [
-      '================================',
-      `  ${tableName}`,
-      clientId ? `  ${clientId}` : '',
-      '================================',
-      ...activeItems.map((item) =>
-        `${String(item.qty).padEnd(3)} ${(productNames[item.productId] || '').substring(0, 18).padEnd(18)} ${item.isComplimentary ? 'FREE' : formatKES(item.unitPrice * item.qty)}`
-      ),
-      '--------------------------------',
-      `TOTAL: ${formatKES(order.totalAmount)}`,
-      '================================',
-      '',
-    ].filter((l) => l !== null).join('\n');
+
+    const receipt = buildCustomerReceipt({
+      orderNumber: order.id.slice(-6).toUpperCase(),
+      tableName,
+      staffName: currentStaff?.name ?? '',
+      clientName: clientId || undefined,
+      items: activeItems.map((item) => ({
+        name: productNames[item.productId] || item.productId,
+        qty: item.qty,
+        unitPrice: item.unitPrice,
+        isComplimentary: item.isComplimentary ?? false,
+      })),
+      total: order.totalAmount,
+      mpesaRef: lastMpesaRef,
+      timestamp: new Date().toISOString(),
+      venueName,
+      venuePhone:   venuePhone   || undefined,
+      venueAddress: venueAddress || undefined,
+      mpesaPaybill: mpesaPaybill || undefined,
+    });
 
     setPrintingReceipt(true);
-    // sendToPrinter returns false on failure — it never throws
-    const ok = await sendToPrinter('bar', new TextEncoder().encode(lines));
+    const ok = await sendToPrinter('bar', new TextEncoder().encode(receipt));
     setPrintingReceipt(false);
     if (!silent) {
       if (ok) {

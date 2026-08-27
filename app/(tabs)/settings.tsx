@@ -64,13 +64,22 @@ export default function SettingsScreen() {
   const [syncResults, setSyncResults] = useState<TablePushResult[] | null>(null);
   const [resetting, setResetting] = useState(false);
 
-  // Settings store (logo + alert email)
-  const logoUri = useSettingsStore((s) => s.logoUri);
-  const alertEmail = useSettingsStore((s) => s.alertEmail);
-  const setLogoUri = useSettingsStore((s) => s.setLogoUri);
+  // Settings store
+  const logoUri      = useSettingsStore((s) => s.logoUri);
+  const alertEmail   = useSettingsStore((s) => s.alertEmail);
+  const setLogoUri   = useSettingsStore((s) => s.setLogoUri);
   const setAlertEmail = useSettingsStore((s) => s.setAlertEmail);
   const loadSettings = useSettingsStore((s) => s.loadSettings);
+  const venuePhone      = useSettingsStore((s) => s.venuePhone);
+  const venueAddress    = useSettingsStore((s) => s.venueAddress);
+  const mpesaPaybill    = useSettingsStore((s) => s.mpesaPaybill);
+  const setVenuePhone   = useSettingsStore((s) => s.setVenuePhone);
+  const setVenueAddress = useSettingsStore((s) => s.setVenueAddress);
+  const setMpesaPaybill = useSettingsStore((s) => s.setMpesaPaybill);
   const [emailInput, setEmailInput] = useState('');
+  const [phoneInput,   setPhoneInput]   = useState('');
+  const [addressInput, setAddressInput] = useState('');
+  const [paybillInput, setPaybillInput] = useState('');
 
   const loadSavedAddresses = usePrinterStore((s) => s.loadSavedAddresses);
 
@@ -79,10 +88,11 @@ export default function SettingsScreen() {
     loadSavedAddresses();
   }, []);
 
-  // Sync alertEmail into local input whenever the store loads/changes
-  useEffect(() => {
-    setEmailInput(alertEmail);
-  }, [alertEmail]);
+  // Sync inputs from store whenever settings load/change
+  useEffect(() => { setEmailInput(alertEmail); },   [alertEmail]);
+  useEffect(() => { setPhoneInput(venuePhone); },   [venuePhone]);
+  useEffect(() => { setAddressInput(venueAddress); }, [venueAddress]);
+  useEffect(() => { setPaybillInput(mpesaPaybill); }, [mpesaPaybill]);
 
   const handlePickLogo = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -361,6 +371,53 @@ export default function SettingsScreen() {
                   />
                   <TouchableOpacity className="bg-primary px-4 py-2 rounded-lg items-center" onPress={handleSaveEmail}>
                     <Text className="text-white text-sm font-medium">Save Email</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Receipt Details */}
+                <View className="bg-white rounded-xl p-4 mb-4 border border-gray-100">
+                  <Text className="text-sm font-bold text-primary mb-1">Receipt Details</Text>
+                  <Text className="text-xs text-gray-400 mb-3">Printed on every customer receipt</Text>
+
+                  <Text className="text-xs text-gray-500 mb-1">Venue Phone</Text>
+                  <TextInput
+                    className="border border-gray-300 rounded-xl p-3 text-base mb-3"
+                    value={phoneInput}
+                    onChangeText={setPhoneInput}
+                    placeholder="e.g. 0700 123 456"
+                    placeholderTextColor="#9ca3af"
+                    keyboardType="phone-pad"
+                  />
+
+                  <Text className="text-xs text-gray-500 mb-1">Venue Address</Text>
+                  <TextInput
+                    className="border border-gray-300 rounded-xl p-3 text-base mb-3"
+                    value={addressInput}
+                    onChangeText={setAddressInput}
+                    placeholder="e.g. Westlands, Nairobi"
+                    placeholderTextColor="#9ca3af"
+                    autoCapitalize="words"
+                  />
+
+                  <Text className="text-xs text-gray-500 mb-1">M-Pesa Paybill Number</Text>
+                  <TextInput
+                    className="border border-gray-300 rounded-xl p-3 text-base mb-3"
+                    value={paybillInput}
+                    onChangeText={setPaybillInput}
+                    placeholder="e.g. 123456"
+                    placeholderTextColor="#9ca3af"
+                    keyboardType="number-pad"
+                  />
+
+                  <TouchableOpacity
+                    className="bg-primary px-4 py-2 rounded-lg items-center"
+                    onPress={() => {
+                      setVenuePhone(phoneInput.trim());
+                      setVenueAddress(addressInput.trim());
+                      setMpesaPaybill(paybillInput.trim());
+                    }}
+                  >
+                    <Text className="text-white text-sm font-medium">Save Receipt Details</Text>
                   </TouchableOpacity>
                 </View>
               </>

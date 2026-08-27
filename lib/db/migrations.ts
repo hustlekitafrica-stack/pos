@@ -33,5 +33,18 @@ export const migrations = schemaMigrations({
         }),
       ],
     },
+    {
+      toVersion: 4,
+      steps: [
+        addColumns({
+          table: 'settings',
+          columns: [
+            { name: 'venue_phone',   type: 'string', isOptional: true },
+            { name: 'venue_address', type: 'string', isOptional: true },
+            { name: 'mpesa_paybill', type: 'string', isOptional: true },
+          ],
+        }),
+      ],
+    },
   ],
 });

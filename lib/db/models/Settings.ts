@@ -13,6 +13,9 @@ export default class Settings extends Model {
   @text('bar_printer_address') barPrinterAddress!: string | null;
   @text('kitchen_printer_address') kitchenPrinterAddress!: string | null;
   @text('venue_name') venueName!: string;
+  @text('venue_phone')   venuePhone!: string | null;
+  @text('venue_address') venueAddress!: string | null;
+  @text('mpesa_paybill') mpesaPaybill!: string | null;
   @readonly @date('created_at') createdAt!: Date;
   @date('updated_at') updatedAt!: Date;
 }

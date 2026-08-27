@@ -16,11 +16,17 @@ interface SettingsState {
   logoUri: string | null;
   alertEmail: string;
   venueName: string;
+  venuePhone: string;
+  venueAddress: string;
+  mpesaPaybill: string;
   loaded: boolean;
   loadSettings: () => Promise<void>;
   setLogoUri: (uri: string | null) => Promise<void>;
   setAlertEmail: (email: string) => Promise<void>;
   setVenueName: (name: string) => Promise<void>;
+  setVenuePhone: (phone: string) => Promise<void>;
+  setVenueAddress: (address: string) => Promise<void>;
+  setMpesaPaybill: (paybill: string) => Promise<void>;
 }
 
 // ── Helper: find or create the global settings row ───────────────────────────
@@ -86,6 +92,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   logoUri: null,
   alertEmail: '',
   venueName: 'Bar POS',
+  venuePhone: '',
+  venueAddress: '',
+  mpesaPaybill: '',
   loaded: false,
 
   loadSettings: async () => {
@@ -95,6 +104,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       let alertEmail = row.alertEmail;
       let logoUri: string | null = row.logoUrl;
       let venueName = row.venueName || 'Bar POS';
+      const venuePhone   = row.venuePhone   ?? '';
+      const venueAddress = row.venueAddress ?? '';
+      const mpesaPaybill = row.mpesaPaybill ?? '';
 
       // ── Migrate from legacy SecureStore on first run ──────────────────────
       if (!alertEmail) {
@@ -117,7 +129,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         }
       }
 
-      set({ alertEmail, logoUri, venueName, loaded: true });
+      set({ alertEmail, logoUri, venueName, venuePhone, venueAddress, mpesaPaybill, loaded: true });
     } catch (e) {
       console.warn('loadSettings error:', e);
       set({ loaded: true });
@@ -149,5 +161,20 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setVenueName: async (name) => {
     set({ venueName: name });
     await updateSettings((s) => { s.venueName = name; });
+  },
+
+  setVenuePhone: async (phone) => {
+    set({ venuePhone: phone });
+    await updateSettings((s) => { s.venuePhone = phone; });
+  },
+
+  setVenueAddress: async (address) => {
+    set({ venueAddress: address });
+    await updateSettings((s) => { s.venueAddress = address; });
+  },
+
+  setMpesaPaybill: async (paybill) => {
+    set({ mpesaPaybill: paybill });
+    await updateSettings((s) => { s.mpesaPaybill = paybill; });
   },
 }));
