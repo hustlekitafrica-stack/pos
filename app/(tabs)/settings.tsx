@@ -187,8 +187,7 @@ export default function SettingsScreen() {
   const handleScanPrinters = async (target: 'bar' | 'kitchen') => {
     setScanning(true);
     setShowPrinterPicker(target);
-    // Returns bonded (already-paired) Classic BT devices — no timeout needed
-    const devices = await scanForPrinters();
+    const devices = await scanForPrinters(5000);
     setDiscoveredPrinters(devices);
     setScanning(false);
   };
@@ -438,10 +437,7 @@ export default function SettingsScreen() {
         {/* ════════════════════════════════════════════════════════════ */}
         {activeTab === 'printers' && (
           <>
-            <Text className="text-xs text-gray-400 mb-1">Connect Bluetooth thermal printers for receipts and kitchen tickets.</Text>
-            <View className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-3">
-              <Text className="text-xs text-amber-800 font-medium">Before connecting here, pair the printer in Android Settings → Bluetooth. Only paired printers appear in the list below.</Text>
-            </View>
+            <Text className="text-xs text-gray-400 mb-3">Connect Bluetooth thermal printers for receipts and kitchen tickets.</Text>
             <View className="bg-white rounded-xl p-4 mb-2 border border-gray-100">
               {/* Bar Printer */}
               <View className="flex-row items-center justify-between mb-4 pb-4 border-b border-gray-100">
@@ -654,13 +650,10 @@ export default function SettingsScreen() {
             {scanning ? (
               <View className="items-center py-6">
                 <ActivityIndicator size="large" />
-                <Text className="text-gray-500 mt-2">Loading paired devices...</Text>
+                <Text className="text-gray-500 mt-2">Scanning for printers...</Text>
               </View>
             ) : discoveredPrinters.length === 0 ? (
-              <View className="py-4">
-                <Text className="text-gray-500 text-center font-medium mb-1">No paired printers found.</Text>
-                <Text className="text-gray-400 text-center text-xs">Open Android Settings → Bluetooth → pair the printer, then come back here.</Text>
-              </View>
+              <Text className="text-gray-400 text-center py-6">No printers found. Make sure Bluetooth is on and the printer is nearby.</Text>
             ) : (
               discoveredPrinters.map((d) => (
                 <TouchableOpacity
