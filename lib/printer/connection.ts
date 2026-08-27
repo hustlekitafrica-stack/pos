@@ -5,7 +5,22 @@
  * No BLE GATT, no UUID discovery, no write-type juggling.
  * ESC/POS bytes stream directly to the printer's serial input.
  */
+import { Platform, PermissionsAndroid } from 'react-native';
 import { usePrinterStore } from '@/stores/printerStore';
+
+async function requestPermissions(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  const sdk = typeof Platform.Version === 'number' ? Platform.Version : parseInt(Platform.Version, 10);
+  if (sdk >= 31) {
+    const granted = await PermissionsAndroid.requestMultiple([
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+    ]);
+    return Object.values(granted).every((v) => v === PermissionsAndroid.RESULTS.GRANTED);
+  }
+  const loc = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+  return loc === PermissionsAndroid.RESULTS.GRANTED;
+}
 
 let RNBluetoothClassic: any = null;
 try {
@@ -31,6 +46,8 @@ export interface PrinterDevice {
  */
 export async function scanForPrinters(): Promise<PrinterDevice[]> {
   if (!RNBluetoothClassic) return [];
+  const ok = await requestPermissions();
+  if (!ok) return [];
   try {
     const bonded = await RNBluetoothClassic.getBondedDevices();
     return (bonded ?? []).map((d: any) => ({ name: d.name ?? d.address, address: d.address }));
@@ -44,6 +61,7 @@ export async function scanForPrinters(): Promise<PrinterDevice[]> {
 
 async function openRfcomm(address: string): Promise<any> {
   if (!RNBluetoothClassic) throw new Error('Bluetooth Classic not available');
+  await requestPermissions();
   // connect() opens an RFCOMM socket using the SPP service UUID automatically
   const device = await RNBluetoothClassic.connectToDevice(address);
   return device;
