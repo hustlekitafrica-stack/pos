@@ -1,7 +1,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 4,
+  version: 5,
   tables: [
     tableSchema({
       name: 'staff',
@@ -225,9 +225,10 @@ export const schema = appSchema({
         { name: 'bar_printer_address', type: 'string', isOptional: true },
         { name: 'kitchen_printer_address', type: 'string', isOptional: true },
         { name: 'venue_name', type: 'string' },
-        { name: 'venue_phone',   type: 'string', isOptional: true },
-        { name: 'venue_address', type: 'string', isOptional: true },
-        { name: 'mpesa_paybill', type: 'string', isOptional: true },
+        { name: 'venue_phone',    type: 'string', isOptional: true },
+        { name: 'venue_address',  type: 'string', isOptional: true },
+        { name: 'mpesa_paybill',  type: 'string', isOptional: true },
+        { name: 'printer_address', type: 'string', isOptional: true },
         { name: 'created_at', type: 'number' },
         { name: 'updated_at', type: 'number' },
       ],

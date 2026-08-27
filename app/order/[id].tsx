@@ -194,22 +194,16 @@ export default function OrderScreen() {
       const clientLabel = clientId || undefined;
       const printJobs: Promise<boolean>[] = [];
 
-      if (routed.bar.length > 0) {
-        const slip = buildOrderSlip(
-          tName,
-          routed.bar.map((i) => ({ name: productNames[i.productId] || i.productId, qty: i.qty, notes: i.notes ?? undefined })),
-          'bar',
-          clientLabel
-        );
-        printJobs.push(sendToPrinter('bar', new TextEncoder().encode(slip)));
-      }
-
       if (routed.kitchen.length > 0) {
         const slip = buildOrderSlip(
           tName,
           routed.kitchen.map((i) => ({ name: productNames[i.productId] || i.productId, qty: i.qty, notes: i.notes ?? undefined })),
           'kitchen',
-          clientLabel
+          clientLabel,
+          currentStaff?.name ?? '',
+          venueName,
+          venuePhone || undefined,
+          venueAddress || undefined,
         );
         printJobs.push(sendToPrinter('kitchen', new TextEncoder().encode(slip)));
       }

@@ -135,36 +135,78 @@ export function buildCustomerReceipt(data: ReceiptData): string {
   return lines.join('');
 }
 
+interface OrderSlipOptions {
+  tableName: string;
+  items: Array<{ name: string; qty: number; notes?: string }>;
+  station: 'bar' | 'kitchen';
+  roomNumber?: string;
+  staffName?: string;
+  venueName?: string;
+  venuePhone?: string;
+  venueAddress?: string;
+}
+
 /**
- * Generate ESC/POS commands for a kitchen/bar order slip.
+ * Generate ESC/POS commands for an order slip.
+ * Kitchen station prints as "CAPTAIN ORDER" with full venue header,
+ * staff name, and date+time.
  */
 export function buildOrderSlip(
   tableName: string,
   items: Array<{ name: string; qty: number; notes?: string }>,
   station: 'bar' | 'kitchen',
   roomNumber?: string,
+  staffName?: string,
+  venueName?: string,
+  venuePhone?: string,
+  venueAddress?: string,
 ): string {
   const lines: string[] = [];
 
-  lines.push('\x1b\x40');           // initialize
-  lines.push('\x1b\x61\x01');       // center
-  lines.push('\x1b\x45\x01');       // bold
-  lines.push(`** ${station.toUpperCase()} ORDER **\n`);
-  lines.push('\x1b\x45\x00');       // bold off
+  lines.push('\x1b\x40');       // initialize printer
+
+  // ── Venue header (kitchen slips only) ────────────────────────────────────
+  if (station === 'kitchen' && venueName) {
+    lines.push('\x1b\x61\x01');   // center
+    lines.push('\x1b\x45\x01');   // bold
+    lines.push('\x1b\x21\x10');   // double height
+    lines.push(`${venueName}\n`);
+    lines.push('\x1b\x21\x00');   // normal
+    lines.push('\x1b\x45\x00');   // bold off
+    if (venueAddress) lines.push(`${center(venueAddress)}\n`);
+    if (venuePhone)   lines.push(`${center('Tel: ' + venuePhone)}\n`);
+  }
+
+  // ── Slip title ────────────────────────────────────────────────────────────
+  lines.push('\x1b\x61\x01');     // center
+  lines.push('\x1b\x45\x01');     // bold
+  const title = station === 'kitchen' ? '** CAPTAIN ORDER **' : `** ${station.toUpperCase()} ORDER **`;
+  lines.push(`${title}\n`);
+  lines.push('\x1b\x45\x00');     // bold off
   lines.push(`${rule('=')}\n`);
-  lines.push('\x1b\x61\x00');       // left
+  lines.push('\x1b\x61\x00');     // left
+
+  // ── Order meta ────────────────────────────────────────────────────────────
   lines.push(`Table: ${tableName}\n`);
   if (roomNumber) lines.push(`Room: ${roomNumber}\n`);
-  lines.push(`Time: ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}\n`);
+  if (staffName)  lines.push(`Staff: ${staffName}\n`);
+
+  // Full date + time
+  const now  = new Date();
+  const date = now.toLocaleDateString('en-GB');
+  const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  lines.push(`Date: ${date}    ${time}\n`);
+
   lines.push(`${rule('-')}\n`);
 
+  // ── Items ─────────────────────────────────────────────────────────────────
   for (const item of items) {
     lines.push(`${item.qty}x ${item.name}\n`);
     if (item.notes) lines.push(`   >> ${item.notes}\n`);
   }
 
   lines.push(`${rule('=')}\n`);
-  lines.push('\n\n\n\n');
+  lines.push('\n\n\n\n\n\n');   // 6 blank lines — feeds past the tear bar
 
   return lines.join('');
 }

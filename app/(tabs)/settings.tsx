@@ -13,10 +13,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { usePrinterStore } from '@/stores/printerStore';
 import {
   scanForPrinters,
-  connectBarPrinter,
-  connectKitchenPrinter,
-  disconnectBarPrinter,
-  disconnectKitchenPrinter,
+  connectPrinter,
+  disconnectPrinter,
   testPrint,
   type PrinterDevice,
 } from '@/lib/printer/connection';
@@ -50,14 +48,13 @@ export default function SettingsScreen() {
   const [staffRole, setStaffRole] = useState<Role>('cashier');
 
   // Printer
-  const barConnected = usePrinterStore((s) => s.barPrinterConnected);
-  const kitchenConnected = usePrinterStore((s) => s.kitchenPrinterConnected);
-  const barAddress = usePrinterStore((s) => s.barPrinterAddress);
-  const kitchenAddress = usePrinterStore((s) => s.kitchenPrinterAddress);
+  const printerConnected = usePrinterStore((s) => s.printerConnected);
+  const printerAddress   = usePrinterStore((s) => s.printerAddress);
+  const loadSavedAddress = usePrinterStore((s) => s.loadSavedAddress);
   const [scanning, setScanning] = useState(false);
   const [testPrinting, setTestPrinting] = useState(false);
   const [discoveredPrinters, setDiscoveredPrinters] = useState<PrinterDevice[]>([]);
-  const [showPrinterPicker, setShowPrinterPicker] = useState<'bar' | 'kitchen' | null>(null);
+  const [showPrinterPicker, setShowPrinterPicker] = useState(false);
 
   // Sync
   const [syncing, setSyncing] = useState(false);
@@ -81,11 +78,11 @@ export default function SettingsScreen() {
   const [addressInput, setAddressInput] = useState('');
   const [paybillInput, setPaybillInput] = useState('');
 
-  const loadSavedAddresses = usePrinterStore((s) => s.loadSavedAddresses);
+
 
   useEffect(() => {
     loadSettings();
-    loadSavedAddresses();
+    loadSavedAddress();
   }, []);
 
   // Sync inputs from store whenever settings load/change
@@ -194,26 +191,20 @@ export default function SettingsScreen() {
     );
   };
 
-  const handleScanPrinters = async (target: 'bar' | 'kitchen') => {
+  const handleScanPrinters = async () => {
     setScanning(true);
-    setShowPrinterPicker(target);
+    setShowPrinterPicker(true);
     const devices = await scanForPrinters(5000);
     setDiscoveredPrinters(devices);
     setScanning(false);
   };
 
   const handleSelectPrinter = async (device: PrinterDevice) => {
-    const target = showPrinterPicker;
-    setShowPrinterPicker(null);
-    if (!target) return;
-
-    const success = target === 'bar'
-      ? await connectBarPrinter(device.address)
-      : await connectKitchenPrinter(device.address);
-
+    setShowPrinterPicker(false);
+    const success = await connectPrinter(device.address);
     Alert.alert(
       success ? 'Connected' : 'Failed',
-      success ? `${target} printer connected: ${device.name}` : `Could not connect to ${device.name}`
+      success ? `Printer connected: ${device.name}` : `Could not connect to ${device.name}`,
     );
   };
 
@@ -494,41 +485,22 @@ export default function SettingsScreen() {
         {/* ════════════════════════════════════════════════════════════ */}
         {activeTab === 'printers' && (
           <>
-            <Text className="text-xs text-gray-400 mb-3">Connect Bluetooth thermal printers for receipts and kitchen tickets.</Text>
+            <Text className="text-xs text-gray-400 mb-3">Connect your Bluetooth thermal printer for receipts and captain orders.</Text>
             <View className="bg-white rounded-xl p-4 mb-2 border border-gray-100">
-              {/* Bar Printer */}
+              {/* Printer */}
               <View className="flex-row items-center justify-between mb-4 pb-4 border-b border-gray-100">
                 <View>
-                  <Text className="text-sm font-medium text-gray-700">Bar Printer</Text>
-                  <Text className={`text-xs mt-0.5 ${barConnected ? 'text-green-600' : 'text-gray-400'}`}>
-                    {barConnected ? `Connected (${barAddress?.slice(0, 12)}...)` : 'Not connected'}
+                  <Text className="text-sm font-medium text-gray-700">Printer</Text>
+                  <Text className={`text-xs mt-0.5 ${printerConnected ? 'text-green-600' : 'text-gray-400'}`}>
+                    {printerConnected ? `Connected (${printerAddress?.slice(0, 12)}...)` : 'Not connected'}
                   </Text>
                 </View>
-                {barConnected ? (
-                  <TouchableOpacity className="bg-red-100 px-3 py-1.5 rounded-lg" onPress={disconnectBarPrinter}>
+                {printerConnected ? (
+                  <TouchableOpacity className="bg-red-100 px-3 py-1.5 rounded-lg" onPress={disconnectPrinter}>
                     <Text className="text-red-600 text-xs font-medium">Disconnect</Text>
                   </TouchableOpacity>
                 ) : (
-                  <TouchableOpacity className="bg-primary px-3 py-1.5 rounded-lg" onPress={() => handleScanPrinters('bar')}>
-                    <Text className="text-white text-xs font-medium">Scan & Connect</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              {/* Kitchen Printer */}
-              <View className="flex-row items-center justify-between mb-4 pb-4 border-b border-gray-100">
-                <View>
-                  <Text className="text-sm font-medium text-gray-700">Kitchen Printer</Text>
-                  <Text className={`text-xs mt-0.5 ${kitchenConnected ? 'text-green-600' : 'text-gray-400'}`}>
-                    {kitchenConnected ? `Connected (${kitchenAddress?.slice(0, 12)}...)` : 'Not connected'}
-                  </Text>
-                </View>
-                {kitchenConnected ? (
-                  <TouchableOpacity className="bg-red-100 px-3 py-1.5 rounded-lg" onPress={disconnectKitchenPrinter}>
-                    <Text className="text-red-600 text-xs font-medium">Disconnect</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity className="bg-primary px-3 py-1.5 rounded-lg" onPress={() => handleScanPrinters('kitchen')}>
+                  <TouchableOpacity className="bg-primary px-3 py-1.5 rounded-lg" onPress={handleScanPrinters}>
                     <Text className="text-white text-xs font-medium">Scan & Connect</Text>
                   </TouchableOpacity>
                 )}
@@ -701,7 +673,7 @@ export default function SettingsScreen() {
         <View className="flex-1 bg-black/50 justify-center items-center p-8">
           <View className="bg-white rounded-2xl p-6 w-full max-w-sm">
             <Text className="text-lg font-bold text-primary mb-4">
-              Select {showPrinterPicker === 'bar' ? 'Bar' : 'Kitchen'} Printer
+              Select Printer
             </Text>
 
             {scanning ? (
@@ -724,7 +696,7 @@ export default function SettingsScreen() {
               ))
             )}
 
-            <TouchableOpacity className="items-center mt-2" onPress={() => setShowPrinterPicker(null)}>
+            <TouchableOpacity className="items-center mt-2" onPress={() => setShowPrinterPicker(false)}>
               <Text className="text-gray-500">Cancel</Text>
             </TouchableOpacity>
           </View>

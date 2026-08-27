@@ -39,6 +39,7 @@ import {
 import { routeOrderItems } from '@/lib/printer/routeOrder';
 import { buildOrderSlip } from '@/lib/printer/templates';
 import { sendToPrinter } from '@/lib/printer/connection';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { Q } from '@nozbe/watermelondb';
 
 
@@ -82,6 +83,7 @@ export default function SellScreen() {
   const deviceId = useDeviceStore((s) => s.deviceId) ?? 'device-unknown';
   const currentStaff = useAuthStore((s) => s.currentStaff);
   const currentShiftId = useAuthStore((s) => s.currentShiftId);
+  const { venueName, venuePhone, venueAddress } = useSettingsStore();
 
   // Station / product state
   const [activeStation, setActiveStation] = useState<string>('bar');
@@ -259,21 +261,16 @@ export default function SellScreen() {
 
         const printJobs: Promise<boolean>[] = [];
 
-        if (routed.bar.length > 0) {
-          const slip = buildOrderSlip(
-            table.name,
-            routed.bar.map((i) => ({ name: productNameMap[i.productId] ?? i.productId, qty: i.qty })),
-            'bar',
-            identifier !== 'Counter' ? identifier : undefined
-          );
-          printJobs.push(sendToPrinter('bar', new TextEncoder().encode(slip)));
-        }
         if (routed.kitchen.length > 0) {
           const slip = buildOrderSlip(
             table.name,
             routed.kitchen.map((i) => ({ name: productNameMap[i.productId] ?? i.productId, qty: i.qty })),
             'kitchen',
-            identifier !== 'Counter' ? identifier : undefined
+            identifier !== 'Counter' ? identifier : undefined,
+            currentStaff?.name ?? '',
+            venueName,
+            venuePhone || undefined,
+            venueAddress || undefined,
           );
           printJobs.push(sendToPrinter('kitchen', new TextEncoder().encode(slip)));
         }
